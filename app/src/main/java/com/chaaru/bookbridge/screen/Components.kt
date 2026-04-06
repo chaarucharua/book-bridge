@@ -16,12 +16,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.chaaru.bookbridge.ui.theme.*
 
 // ── Burgundy Primary Button ───────────────────────────────────
 @Composable
@@ -56,6 +58,35 @@ fun BurgundyButton(
     }
 }
 
+// ── Google Button ─────────────────────────────────────────────
+@Composable
+fun GoogleButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    OutlinedButton(
+        onClick   = onClick,
+        modifier  = modifier.height(46.dp),
+        shape     = RoundedCornerShape(12.dp),
+        border    = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(Slate200)),
+        colors    = ButtonDefaults.outlinedButtonColors(contentColor = Slate700)
+    ) {
+        Text(
+            "G",
+            fontSize   = 18.sp,
+            fontWeight = FontWeight.ExtraBold,
+            color      = Color(0xFF4285F4)
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "Continue with Google",
+            fontSize   = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color      = Slate700
+        )
+    }
+}
+
 // ── Outlined Text Field matching UI design ────────────────────
 @Composable
 fun BBTextField(
@@ -76,8 +107,9 @@ fun BBTextField(
         label         = { Text(label, fontSize = 12.sp) },
         modifier      = modifier.fillMaxWidth(),
         singleLine    = singleLine,
+        textStyle     = LocalTextStyle.current.copy(fontSize = 14.sp, color = Slate800),
         placeholder   = if (placeholder.isNotEmpty()) {
-            { Text(placeholder, fontSize = 12.sp, color = Slate400) }
+            { Text(placeholder, fontSize = 14.sp, color = Slate400) }
         } else null,
         leadingIcon   = leadingIcon?.let {
             { Icon(it, null, tint = Slate400, modifier = Modifier.size(18.dp)) }

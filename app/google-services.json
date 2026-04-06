@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "358159579271",
+    "project_id": "book-bridge-b14e1",
+    "storage_bucket": "book-bridge-b14e1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:358159579271:android:830bdfe6af20f53d972022",
+        "android_client_info": {
+          "package_name": "com.chaaru.bookbridge"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "358159579271-3t6m441c1os51avs99n8dth4hkkheooe.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.chaaru.bookbridge",
+            "certificate_hash": "a4fc7e8ab1405aa33aef8cf7a2d75f000a734a91"
+          }
+        },
+        {
+          "client_id": "358159579271-hbhnl8s44daj66eglinuvk09suud8ll2.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBPjVFwMizUgsuXTL2G_wM8xOA_hqMGvBQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "358159579271-hbhnl8s44daj66eglinuvk09suud8ll2.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

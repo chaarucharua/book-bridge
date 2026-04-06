@@ -1,233 +1,164 @@
 package com.chaaru.bookbridge.screen
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
-import androidx.compose.foundation.background
+
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.chaaru.bookbridge.data.model.Book
+import com.chaaru.bookbridge.viewmodel.AuthViewModel
+import com.chaaru.bookbridge.viewmodel.BooksViewModel
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ManageBooksScreen(
-    onBack: () -> Unit = {},
-    onEditBook: (String) -> Unit = {}
-) {
-    var query       by remember { mutableStateOf("") }
-    var selectedTab by remember { mutableIntStateOf(0) }
-    var deleteTarget by remember { mutableStateOf<ManageBookUiModel?>(null) }
+fun ManageBooksScreen(bookId: String? = null, booksViewModel: BooksViewModel, authViewModel: AuthViewModel, onBack: () -> Unit) {
+    val userProfile = authViewModel.profile.value ?: return
+    val allBooks by booksViewModel.allBooks.collectAsState()
+    val existingBook = remember(bookId, allBooks) { allBooks.find { it.id == bookId } }
 
-    val filtered = manageSamples
-        .filter { if (query.isBlank()) true else
-            it.title.contains(query, ignoreCase = true) || it.author.contains(query, ignoreCase = true)
-        }
-        .filter { when (selectedTab) { 1 -> it.isAvailable; 2 -> !it.isAvailable; else -> true } }
-
-    // Delete dialog
-    deleteTarget?.let { book ->
-        AlertDialog(
-            onDismissRequest = { deleteTarget = null },
-            title  = { Text("Delete Book", fontWeight = FontWeight.Bold) },
-            text   = { Text("Remove \"${book.title}\" from your listing?") },
-            confirmButton = {
-                TextButton(onClick = { deleteTarget = null }) {
-                    Text("Delete", color = Red400, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) { Text("Cancel") }
-            }
-        )
-    }
+    val categories = listOf("Fiction", "Tech", "Science", "History", "Children", "Non-Fiction")
+    var title by remember(existingBook) { mutableStateOf(existingBook?.title ?: "") }
+    var author by remember(existingBook) { mutableStateOf(existingBook?.author ?: "") }
+    var category by remember(existingBook) { mutableStateOf(existingBook?.category ?: "Fiction") }
+    var description by remember(existingBook) { mutableStateOf(existingBook?.description ?: "") }
+    var price by remember(existingBook) { mutableStateOf(existingBook?.price?.toString() ?: "") }
+    var condition by remember(existingBook) { mutableStateOf(existingBook?.condition ?: "Good") }
+    var expanded by remember { mutableStateOf(false) }
 
     Scaffold(
-        topBar         = { BBTopBar("Manage Books", onBack = onBack) },
-        containerColor = Parchment
-    ) { padding ->
+        topBar = {
+            TopAppBar(
+                title = { Text(if (bookId == null) "Add New Book" else "Edit Book") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
+        }
+    ) { paddingValues ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Parchment)
-                .padding(padding)
+                .padding(paddingValues)
+                .padding(24.dp)
         ) {
-            // Search + tabs header
-            Column(
-                modifier = Modifier
-                    .background(White)
-                    .padding(horizontal = 14.dp, vertical = 8.dp)
+            val textFieldColors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                focusedLabelColor = MaterialTheme.colorScheme.primary,
+                unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                cursorColor = MaterialTheme.colorScheme.primary,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline
+            )
+
+            OutlinedTextField(
+                value = title, 
+                onValueChange = { title = it }, 
+                label = { Text("Book Title") }, 
+                modifier = Modifier.fillMaxWidth(),
+                colors = textFieldColors
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = author, 
+                onValueChange = { author = it }, 
+                label = { Text("Author") }, 
+                modifier = Modifier.fillMaxWidth(),
+                colors = textFieldColors
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            ExposedDropdownMenuBox(
+                expanded = expanded,
+                onExpandedChange = { expanded = !expanded },
+                modifier = Modifier.fillMaxWidth()
             ) {
                 OutlinedTextField(
-                    value         = query,
-                    onValueChange = { query = it },
-                    modifier      = Modifier.fillMaxWidth().height(50.dp),
-                    placeholder   = { Text("Search your inventory...", fontSize = 13.sp, color = Slate400) },
-                    leadingIcon   = { Icon(Icons.Default.Search, null,
-                        tint = Slate400, modifier = Modifier.size(18.dp)) },
-                    singleLine    = true,
-                    shape         = RoundedCornerShape(12.dp),
-                    colors        = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor   = Burgundy,
-                        unfocusedBorderColor = Slate200,
-                        unfocusedContainerColor = ParchmentMid,
-                        focusedContainerColor   = ParchmentLight
-                    )
+                    value = category,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Category") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                    modifier = Modifier.menuAnchor().fillMaxWidth(),
+                    colors = textFieldColors
                 )
-                Spacer(Modifier.height(8.dp))
-                TabRow(
-                    selectedTabIndex = selectedTab,
-                    containerColor   = White,
-                    contentColor     = Burgundy,
-                    indicator        = { pos ->
-                        TabRowDefaults.SecondaryIndicator(
-                            Modifier.tabIndicatorOffset(pos[selectedTab]),
-                            color = Burgundy
-                        )
-                    }
+                ExposedDropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false }
                 ) {
-                    listOf(
-                        "All (${manageSamples.size})",
-                        "Available",
-                        "Reserved"
-                    ).forEachIndexed { i, t ->
-                        Tab(
-                            selected             = selectedTab == i,
-                            onClick              = { selectedTab = i },
-                            text                 = { Text(t, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
-                            selectedContentColor = Burgundy,
-                            unselectedContentColor = Slate400
+                    categories.forEach { selectionOption ->
+                        DropdownMenuItem(
+                            text = { Text(selectionOption) },
+                            onClick = {
+                                category = selectionOption
+                                expanded = false
+                            }
                         )
                     }
                 }
             }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = condition, 
+                onValueChange = { condition = it }, 
+                label = { Text("Condition (e.g., New, Good, Used)") }, 
+                modifier = Modifier.fillMaxWidth(),
+                colors = textFieldColors
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = description, 
+                onValueChange = { description = it }, 
+                label = { Text("Description") }, 
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 3,
+                colors = textFieldColors
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = price, 
+                onValueChange = { price = it }, 
+                label = { Text("Price (₹)") }, 
+                modifier = Modifier.fillMaxWidth(),
+                colors = textFieldColors
+            )
 
-            // Book list
-            LazyColumn(
-                modifier       = Modifier.fillMaxSize().background(Parchment),
-                contentPadding = PaddingValues(14.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+            Spacer(modifier = Modifier.height(32.dp))
+            
+            Button(
+                onClick = {
+                    if (title.isNotBlank() && author.isNotBlank() && price.toDoubleOrNull() != null) {
+                        val book = Book(
+                            id = bookId ?: "",
+                            title = title,
+                            author = author,
+                            category = category,
+                            condition = condition,
+                            description = description,
+                            price = price.toDoubleOrNull() ?: 0.0,
+                            storeId = userProfile.storeId ?: "",
+                            storeName = existingBook?.storeName ?: "",
+                            displayStoreName = existingBook?.displayStoreName ?: "",
+                            ownerId = userProfile.uid,
+                            available = existingBook?.available ?: true,
+                            rating = existingBook?.rating ?: 0.0,
+                            reviewCount = existingBook?.reviewCount ?: 0L
+                        )
+                        if (bookId == null) booksViewModel.addBook(book)
+                        else booksViewModel.updateBook(book)
+                        
+                        onBack()
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = title.isNotBlank() && author.isNotBlank()
             ) {
-                if (filtered.isEmpty()) item {
-                    Box(Modifier.fillMaxWidth().padding(top = 60.dp), Alignment.Center) {
-                        Text("No books found", color = Slate400, fontSize = 14.sp)
-                    }
-                }
-                items(filtered) { book ->
-                    ManageBookCard(
-                        book     = book,
-                        onEdit   = { onEditBook(book.id) },
-                        onDelete = { deleteTarget = book }
-                    )
-                }
+                Text(if (bookId == null) "Add to Inventory" else "Update Book")
             }
         }
     }
 }
-
-// ── Manage Book Card ───────────────────────────────────────────
-@Composable
-fun ManageBookCard(
-    book: ManageBookUiModel,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
-) {
-    Card(
-        modifier  = Modifier.fillMaxWidth(),
-        shape     = RoundedCornerShape(14.dp),
-        colors    = CardDefaults.cardColors(containerColor = White),
-        elevation = CardDefaults.cardElevation(1.dp)
-    ) {
-        Row(
-            modifier          = Modifier.padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            BookThumb(emoji = book.emoji, width = 46, height = 58)
-            Spacer(Modifier.width(10.dp))
-
-            Column(Modifier.weight(1f)) {
-                Text(book.title,
-                    fontSize   = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color      = Slate800,
-                    maxLines   = 1)
-                Text("${book.author} · ${book.category}",
-                    fontSize = 10.sp,
-                    color    = Slate400,
-                    modifier = Modifier.padding(top = 2.dp))
-
-                // Tags row
-                Row(
-                    Modifier.padding(top = 5.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    val (condBg, condFg) = when (book.condition) {
-                        "New", "Like New" -> GreenBg to GreenText
-                        "Good"            -> GreenBg to GreenText
-                        else              -> AmberBg to AmberText
-                    }
-                    MiniTag(book.condition, condBg, condFg)
-                    MiniTag(
-                        if (book.isAvailable) "Available" else "Reserved",
-                        if (book.isAvailable) GreenBg else BurgundyFaint,
-                        if (book.isAvailable) GreenText else Burgundy
-                    )
-                }
-            }
-
-            // Price + actions
-            Column(horizontalAlignment = Alignment.End) {
-                Text("₹${book.price}",
-                    fontSize   = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    color      = Burgundy
-                )
-                Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    // Edit button
-                    IconButton(
-                        onClick  = onEdit,
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(BurgundyFaint)
-                    ) {
-                        Icon(Icons.Default.Edit, "Edit",
-                            tint = Burgundy, modifier = Modifier.size(14.dp))
-                    }
-                    // Delete button
-                    IconButton(
-                        onClick  = onDelete,
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(RedBg)
-                    ) {
-                        Icon(Icons.Default.Delete, "Delete",
-                            tint = Red400, modifier = Modifier.size(14.dp))
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ── UI Model + Sample Data ─────────────────────────────────────
-data class ManageBookUiModel(
-    val id: String, val title: String, val author: String,
-    val category: String, val condition: String, val emoji: String,
-    val price: Int, val isAvailable: Boolean
-)
-
-val manageSamples = listOf(
-    ManageBookUiModel("1","Data Structures & Algorithms","T. Cormen","CS","Good","📘",220,false),
-    ManageBookUiModel("2","Physics Vol II","H.C. Verma","Science","Fair","📙",150,true),
-    ManageBookUiModel("3","Organic Chemistry","P. Morrison","Science","Like New","📗",185,true),
-    ManageBookUiModel("4","Engineering Maths II","B.S. Grewal","Math","Fair","📕",130,true),
-)

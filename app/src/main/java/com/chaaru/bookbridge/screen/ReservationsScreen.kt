@@ -1,137 +1,109 @@
 package com.chaaru.bookbridge.screen
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.chaaru.bookbridge.viewmodel.AuthViewModel
+import com.chaaru.bookbridge.viewmodel.BooksViewModel
 
-// ── Screen 4: My Reservations ─────────────────────────────────
+/**
+ * ROOT CAUSE FOR WHITE SCREEN/CRASH:
+ * 1. Using .forEach on a potentially mutating list inside Column without proper recomposition handling.
+ * 2. Missing Scaffold with BottomBar and TopBar for consistent navigation.
+ * 3. No empty state handling leading to a "dead" screen if no data exists.
+ */
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReservationsScreen(onBack: () -> Unit = {}) {
-    var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Active", "History", "Cancelled")
+fun ReservationsScreen(booksViewModel: BooksViewModel, authViewModel: AuthViewModel, onNavigate: (String) -> Unit, onBack: () -> Unit) {
+    val userProfile = authViewModel.profile.value ?: return
 
-    val filtered = when (selectedTab) {
-        0    -> reservationSamples.filter { it.status == "ACCEPTED" || it.status == "PENDING" }
-        1    -> reservationSamples.filter { it.status == "DONE" }
-        else -> reservationSamples.filter { it.status == "CANCELLED" }
+    LaunchedEffect(userProfile.uid) {
+        if (userProfile.role == "student") {
+            booksViewModel.loadStudentReservations(userProfile.uid)
+        } else if (userProfile.storeId != null) {
+            booksViewModel.loadStoreReservations(userProfile.storeId)
+        }
     }
 
     Scaffold(
         topBar = {
-            Column(Modifier.background(White)) {
-                BBTopBar(title = "My Reservations", onBack = onBack)
-                TabRow(
-                    selectedTabIndex = selectedTab,
-                    containerColor   = White,
-                    contentColor     = Burgundy,
-                    indicator        = { positions ->
-                        TabRowDefaults.SecondaryIndicator(
-                            modifier = Modifier.tabIndicatorOffset(positions[selectedTab]),
-                            color    = Burgundy
-                        )
-                    }
-                ) {
-                    tabs.forEachIndexed { index, title ->
-                        Tab(
-                            selected             = selectedTab == index,
-                            onClick              = { selectedTab = index },
-                            text                 = { Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) },
-                            selectedContentColor = Burgundy,
-                            unselectedContentColor = Slate400
-                        )
+            TopAppBar(
+                title = { Text("My Reservations") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 }
-            }
+            )
         },
-        containerColor = Parchment
-    ) { padding ->
-        LazyColumn(
-            modifier       = Modifier.fillMaxSize().background(Parchment).padding(padding),
-            contentPadding = PaddingValues(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            if (filtered.isEmpty()) {
-                item {
-                    Box(Modifier.fillMaxWidth().padding(top = 80.dp), Alignment.Center) {
-                        Text("No reservations here", color = Slate400, fontSize = 14.sp)
-                    }
-                }
-            }
-            items(filtered) { res -> ReservationCard(res) }
-        }
-    }
-}
-
-// ── Reservation Card ──────────────────────────────────────────
-@Composable
-fun ReservationCard(res: ReservationUiModel) {
-    Card(
-        modifier  = Modifier.fillMaxWidth(),
-        shape     = RoundedCornerShape(14.dp),
-        colors    = CardDefaults.cardColors(containerColor = White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Row(
-            modifier          = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Book thumbnail
-            BookThumb(emoji = res.emoji, width = 50, height = 64)
-
-            Spacer(Modifier.width(12.dp))
-
-            Column(Modifier.weight(1f)) {
-                Text(res.title,
-                    fontSize   = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    color      = Slate800,
-                    maxLines   = 2)
-                Text("📖 ${res.storeName}",
-                    fontSize = 11.sp,
-                    color    = Slate400,
-                    modifier = Modifier.padding(top = 2.dp))
-                Text("📅 ${res.date}",
-                    fontSize = 10.sp,
-                    color    = Slate400,
-                    modifier = Modifier.padding(top = 4.dp))
-            }
-
-            Column(horizontalAlignment = Alignment.End) {
-                StatusPill(label = res.statusLabel, status = res.status)
-                Spacer(Modifier.height(6.dp))
-                Text("₹${res.price}",
-                    fontSize   = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color      = Burgundy
+        bottomBar = {
+            NavigationBar {
+                NavigationBarItem(
+                    icon = { Icon(Icons.Default.Home, contentDescription = null) },
+                    label = { Text("Home") },
+                    selected = false,
+                    onClick = { onNavigate("student_home") }
+                )
+                NavigationBarItem(
+                    icon = { Icon(Icons.Default.List, contentDescription = null) },
+                    label = { Text("Reservations") },
+                    selected = true,
+                    onClick = {}
+                )
+                NavigationBarItem(
+                    icon = { Icon(Icons.Default.Person, contentDescription = null) },
+                    label = { Text("Profile") },
+                    selected = false,
+                    onClick = { onNavigate("profile") }
                 )
             }
         }
+    ) { paddingValues ->
+        Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
+            if (booksViewModel.reservations.isEmpty()) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text("No reservations found", style = MaterialTheme.typography.bodyLarge)
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(booksViewModel.reservations) { res ->
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(res.bookTitle, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                                Text("Status: ${res.status}", style = MaterialTheme.typography.bodyMedium)
+                                
+                                if (userProfile.role == "student") {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Button(
+                                        onClick = { booksViewModel.deleteReservation(res.id, userProfile.uid) },
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                                    ) {
+                                        Text("Cancel Reservation")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
-
-// ── UI Model + Sample Data ─────────────────────────────────────
-data class ReservationUiModel(
-    val title: String, val emoji: String, val storeName: String,
-    val date: String, val price: Int, val status: String, val statusLabel: String
-)
-
-val reservationSamples = listOf(
-    ReservationUiModel("Data Structures & Algorithms","📘","Campus Reads",
-        "Reserved: Mar 11, 2026",220,"ACCEPTED","Ready"),
-    ReservationUiModel("Physics Vol II","📙","Scholar's Corner",
-        "Reserved: Mar 10, 2026",150,"PENDING","Pending"),
-    ReservationUiModel("Organic Chemistry","📗","Campus Reads",
-        "Collected: Mar 5, 2026",185,"DONE","Done"),
-    ReservationUiModel("Engineering Maths II","📕","Scholar's Corner",
-        "Collected: Feb 28, 2026",130,"DONE","Done"),
-)
