@@ -4,19 +4,24 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.chaaru.bookbridge.data.firebase.AuthManager
-import com.chaaru.bookbridge.data.firebase.FirestoreManager
+import com.chaaru.bookbridge.data.firebase.*
 import com.chaaru.bookbridge.data.model.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
-class AuthViewModel(private val authManager: AuthManager = AuthManager()) : ViewModel() {
-    var profile = mutableStateOf<UserProfile?>(null)
-    var isLoading = mutableStateOf(false)
-    var error = mutableStateOf<String?>(null)
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.CreationExtras
+
+class AuthViewModel(private val authManager: AuthManager) : ViewModel() {
+    val profile = mutableStateOf<UserProfile?>(null)
+    val isLoading = mutableStateOf(false)
+    val error = mutableStateOf<String?>(null)
+    // ... rest of AuthViewModel
 
     init {
-        authManager.currentUser()?.let { fetchProfile(it.uid) }
+        authManager.currentUser()?.let {
+            fetchProfile(it.uid)
+        }
     }
 
     fun login(email: String, password: String, onSuccess: (String) -> Unit) {
@@ -25,7 +30,9 @@ class AuthViewModel(private val authManager: AuthManager = AuthManager()) : View
             authManager.login(email, password).onSuccess {
                 profile.value = it
                 onSuccess(it.role)
-            }.onFailure { error.value = it.message }
+            }.onFailure {
+                error.value = it.message
+            }
             isLoading.value = false
         }
     }
@@ -36,70 +43,93 @@ class AuthViewModel(private val authManager: AuthManager = AuthManager()) : View
             authManager.firebaseAuthWithGoogle(idToken).onSuccess {
                 profile.value = it
                 onSuccess(it.role)
-            }.onFailure { error.value = it.message }
+            }.onFailure {
+                error.value = it.message
+            }
             isLoading.value = false
         }
     }
 
-    fun register(name: String, email: String, password: String, role: String, phone: String, storeName: String?, location: String?, onSuccess: (String) -> Unit) {
+    fun register(name: String, email: String, password: String, role: String, phone: String, storeName: String? = null, location: String? = null, onSuccess: (String) -> Unit) {
         viewModelScope.launch {
             isLoading.value = true
             authManager.register(name, email, password, role, phone, storeName, location).onSuccess {
                 profile.value = it
                 onSuccess(it.role)
-            }.onFailure { error.value = it.message }
+            }.onFailure {
+                error.value = it.message
+            }
             isLoading.value = false
         }
     }
 
-    fun logout(onComplete: () -> Unit) {
+    fun logout(onSuccess: () -> Unit) {
         authManager.logout()
         profile.value = null
-        onComplete()
+        onSuccess()
     }
 
-    private fun fetchProfile(uid: String) {
+    fun fetchProfile(uid: String) {
         viewModelScope.launch {
             profile.value = authManager.getUserProfile(uid)
         }
     }
 
-    fun updateProfile(newProfile: UserProfile) {
+    fun updateProfile(profile: UserProfile) {
         viewModelScope.launch {
-            authManager.updateProfile(newProfile)
-            profile.value = newProfile
+            authManager.updateProfile(profile)
+            this@AuthViewModel.profile.value = profile
         }
     }
 
-    fun deleteAccount(onComplete: () -> Unit) {
+    fun deleteAccount(onSuccess: () -> Unit) {
         viewModelScope.launch {
-            authManager.deleteAccount().onSuccess { onComplete() }
+            isLoading.value = true
+            authManager.deleteAccount().onSuccess {
+                profile.value = null
+                onSuccess()
+            }.onFailure {
+                error.value = it.message
+            }
+            isLoading.value = false
+        }
+    }
+
+    fun resetPassword(email: String, onComplete: () -> Unit) {
+        viewModelScope.launch {
+            isLoading.value = true
+            authManager.resetPassword(email).onSuccess {
+                onComplete()
+            }.onFailure {
+                error.value = it.message
+            }
+            isLoading.value = false
         }
     }
 }
 
-class BooksViewModel(private val firestoreManager: FirestoreManager = FirestoreManager()) : ViewModel() {
+class BooksViewModel(private val firestoreManager: FirestoreManager) : ViewModel() {
     private val _books = MutableStateFlow<List<Book>>(emptyList())
     val allBooks: StateFlow<List<Book>> = _books.asStateFlow()
     val stores = mutableStateListOf<Store>()
     val favorites = mutableStateListOf<String>()
     val reservations = mutableStateListOf<Reservation>()
     val reviews = mutableStateListOf<Review>()
-    
-    val isLoading = mutableStateOf(false)
-    private val _filterCategory = MutableStateFlow("All")
-    val filterCategory: StateFlow<String> = _filterCategory
-    
-    private val _searchQuery = MutableStateFlow("")
-    val searchQuery: StateFlow<String> = _searchQuery
 
-    val filteredBooks: StateFlow<List<Book>> = combine(_books, _searchQuery, _filterCategory) { books, query, category ->
+    val isLoading = mutableStateOf(false)
+    val error = mutableStateOf<String?>(null)
+    private val _filterCategory = MutableStateFlow("All")
+    val filterCategory: StateFlow<String> = _filterCategory.asStateFlow()
+
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    val filteredBooks: StateFlow<List<Book>> = combine(_books, _filterCategory, _searchQuery) { books, category, query ->
         books.filter { book ->
-            val matchesQuery = query.isBlank() || 
-                               book.title.contains(query, ignoreCase = true) || 
-                               book.author.contains(query, ignoreCase = true)
-            val matchesCategory = category == "All" || book.category.equals(category, ignoreCase = true)
-            matchesQuery && matchesCategory
+            val matchesCategory = category == "All" || book.category == category
+            val matchesSearch = book.title?.contains(query, ignoreCase = true) == true ||
+                                book.author?.contains(query, ignoreCase = true) == true
+            matchesCategory && matchesSearch
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -112,18 +142,10 @@ class BooksViewModel(private val firestoreManager: FirestoreManager = FirestoreM
         loadStores()
     }
 
-    fun loadBooks(forceReset: Boolean = false) {
+    fun loadBooks(forceRefresh: Boolean = false) {
         viewModelScope.launch {
             isLoading.value = true
-            if (forceReset) {
-                firestoreManager.resetAndSeed()
-            }
-            val results = firestoreManager.getBooks()
-            _books.value = results
-            if (results.isEmpty() && !forceReset) {
-                firestoreManager.resetAndSeed()
-                _books.value = firestoreManager.getBooks()
-            }
+            _books.value = firestoreManager.getBooks()
             isLoading.value = false
         }
     }
@@ -131,9 +153,7 @@ class BooksViewModel(private val firestoreManager: FirestoreManager = FirestoreM
     fun loadOwnerBooks(storeId: String) {
         viewModelScope.launch {
             isLoading.value = true
-            val results = firestoreManager.getBooks(storeId = storeId)
-            // If storeId is provided, we still update _books which filteredBooks/recommendedBooks observe
-            _books.value = results
+            _books.value = firestoreManager.getBooks(storeId = storeId)
             isLoading.value = false
         }
     }
@@ -167,12 +187,9 @@ class BooksViewModel(private val firestoreManager: FirestoreManager = FirestoreM
         }
     }
 
-    fun reserveBook(reservation: Reservation, onComplete: () -> Unit, onError: (String) -> Unit) {
+    fun reserveBook(res: Reservation, onSuccess: () -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
-            firestoreManager.reserveBook(reservation).onSuccess { 
-                onComplete()
-                loadStudentReservations(reservation.userId)
-            }.onFailure { onError(it.message ?: "Failed") }
+            firestoreManager.reserveBook(res).onSuccess { onSuccess() }.onFailure { onError(it.message ?: "Error") }
         }
     }
 
@@ -225,18 +242,57 @@ class BooksViewModel(private val firestoreManager: FirestoreManager = FirestoreM
         }
     }
 
-    fun addBook(book: Book) = viewModelScope.launch { 
-        firestoreManager.addBook(book)
-        book.storeId.takeIf { it.isNotEmpty() }?.let { loadOwnerBooks(it) } ?: loadBooks()
+    fun addBook(book: Book) = viewModelScope.launch {
+        isLoading.value = true
+        try {
+            firestoreManager.addBook(book)
+            loadOwnerBooks(book.storeId ?: "")
+        } catch (e: Exception) {
+            this@BooksViewModel.error.value = e.message
+        } finally {
+            isLoading.value = false
+        }
     }
 
     fun updateBook(book: Book) = viewModelScope.launch {
-        firestoreManager.updateBook(book)
-        book.storeId.takeIf { it.isNotEmpty() }?.let { loadOwnerBooks(it) } ?: loadBooks()
+        isLoading.value = true
+        try {
+            firestoreManager.updateBook(book)
+            loadOwnerBooks(book.storeId ?: "")
+        } catch (e: Exception) {
+            this@BooksViewModel.error.value = e.message
+        } finally {
+            isLoading.value = false
+        }
     }
-    
-    fun deleteBook(id: String, storeId: String) = viewModelScope.launch { 
-        firestoreManager.deleteBook(id)
-        loadOwnerBooks(storeId) 
+
+    fun deleteBook(id: String, storeId: String) {
+        viewModelScope.launch {
+            firestoreManager.deleteBook(id)
+            loadOwnerBooks(storeId)
+        }
+    }
+
+    fun clearState() {
+        _books.value = emptyList()
+        stores.clear()
+        favorites.clear()
+        reservations.clear()
+        reviews.clear()
+        _searchQuery.value = ""
+        _filterCategory.value = "All"
+    }
+}
+
+class ViewModelFactory : ViewModelProvider.Factory {
+    private val authManager = AuthManager()
+    private val firestoreManager = FirestoreManager()
+
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        return when {
+            modelClass.isAssignableFrom(AuthViewModel::class.java) -> AuthViewModel(authManager) as T
+            modelClass.isAssignableFrom(BooksViewModel::class.java) -> BooksViewModel(firestoreManager) as T
+            else -> throw IllegalArgumentException("Unknown ViewModel class")
+        }
     }
 }

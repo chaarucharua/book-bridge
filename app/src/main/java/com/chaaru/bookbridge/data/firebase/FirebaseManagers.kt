@@ -28,46 +28,37 @@ class AuthManager {
     }
 
     suspend fun register(name: String, email: String, password: String, role: String, phone: String, storeName: String? = null, location: String? = null): Result<UserProfile> = try {
-        // First check if a profile already exists for this email (for seeded users)
-        val existingProfileSnap = db.collection("users").whereEqualTo("email", email).get().await()
-        
         val result = auth.createUserWithEmailAndPassword(email, password).await()
         val uid = result.user!!.uid
         
-        var profile: UserProfile
-        if (!existingProfileSnap.isEmpty) {
-            // Seeded user case: Update the existing document with the new UID
-            val doc = existingProfileSnap.documents[0]
-            val oldUid = doc.id
-            val data = doc.toObject(UserProfile::class.java)!!.copy(uid = uid)
-            
-            // Delete old doc and create new one with correct UID
-            db.collection("users").document(oldUid).delete().await()
-            db.collection("users").document(uid).set(data).await()
-            profile = data
-        } else {
-            // Normal registration
-            var storeId: String? = null
-            if (role == "owner") {
-                val storeRef = db.collection("stores").document()
-                storeId = storeRef.id
-                db.collection("stores").document(storeId).set(Store(
-                    id = storeId,
-                    name = storeName ?: "$name's Store",
-                    ownerId = uid,
-                    location = location ?: "TBD",
-                    description = "Book marketplace store"
-                )).await()
-            }
-            profile = UserProfile(uid = uid, name = name, email = email, role = role, phone = phone, storeId = storeId)
-            db.collection("users").document(uid).set(profile).await()
+        var storeId: String? = null
+        if (role == "owner") {
+            val storeRef = db.collection("stores").document()
+            storeId = storeRef.id
+            db.collection("stores").document(storeId).set(Store(
+                id = storeId,
+                name = storeName ?: "$name's Store",
+                ownerId = uid,
+                location = location ?: "TBD",
+                description = "Book marketplace store"
+            )).await()
         }
+        val profile = UserProfile(uid = uid, name = name, email = email, role = role, phone = phone, storeId = storeId)
+        db.collection("users").document(uid).set(profile).await()
+
         Result.success(profile)
     } catch (e: Exception) {
         Result.failure(e)
     }
 
     fun logout() = auth.signOut()
+
+    suspend fun resetPassword(email: String): Result<Unit> = try {
+        auth.sendPasswordResetEmail(email).await()
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
 
     suspend fun updateProfile(profile: UserProfile): Result<Unit> = try {
         db.collection("users").document(profile.uid).set(profile).await()
@@ -78,7 +69,30 @@ class AuthManager {
 
     suspend fun deleteAccount(): Result<Unit> = try {
         val user = auth.currentUser ?: throw Exception("Not logged in")
-        db.collection("users").document(user.uid).delete().await()
+        val uid = user.uid
+        
+        // 1. Get profile to check for storeId
+        val profile = getUserProfile(uid)
+        
+        // 2. Delete User Profile
+        db.collection("users").document(uid).delete().await()
+        
+        // 3. If owner, delete store and associated books
+        profile?.storeId?.let { storeId ->
+            db.collection("stores").document(storeId).delete().await()
+            val books = db.collection("books").whereEqualTo("storeId", storeId).get().await()
+            for (doc in books) {
+                doc.reference.delete().await()
+            }
+        }
+        
+        // 4. Delete user's reservations
+        val reservations = db.collection("reservations").whereEqualTo("userId", uid).get().await()
+        for (doc in reservations) {
+            doc.reference.delete().await()
+        }
+
+        // 5. Delete Auth User
         user.delete().await()
         Result.success(Unit)
     } catch (e: Exception) {
@@ -184,23 +198,60 @@ class FirestoreManager {
     }
 
     suspend fun addBook(book: Book) { 
-        val store = db.collection("stores").document(book.storeId).get().await().toObject(Store::class.java)
+        val storeId = book.storeId ?: ""
+        val store = if (storeId.isNotEmpty()) db.collection("stores").document(storeId).get().await().toObject(Store::class.java) else null
         val bookWithInfo = book.copy(
             storeName = store?.name ?: book.storeName,
             displayStoreName = store?.name ?: book.storeName,
             ownerId = store?.ownerId ?: book.ownerId
         )
-        db.collection("books").add(bookWithInfo).await() 
+        // Explicitly remove id to let Firestore generate one
+        val bookMap = hashMapOf(
+            "title" to bookWithInfo.title,
+            "author" to bookWithInfo.author,
+            "category" to bookWithInfo.category,
+            "description" to bookWithInfo.description,
+            "condition" to bookWithInfo.condition,
+            "price" to bookWithInfo.price,
+            "storeId" to bookWithInfo.storeId,
+            "storeName" to bookWithInfo.storeName,
+            "ownerId" to bookWithInfo.ownerId,
+            "displayStoreName" to bookWithInfo.displayStoreName,
+            "available" to bookWithInfo.available,
+            "rating" to bookWithInfo.rating,
+            "reviewCount" to bookWithInfo.reviewCount,
+            "startDate" to bookWithInfo.startDate,
+            "endDate" to bookWithInfo.endDate
+        )
+        db.collection("books").add(bookMap).await()
     }
 
     suspend fun updateBook(book: Book) { 
-        val store = db.collection("stores").document(book.storeId).get().await().toObject(Store::class.java)
+        val storeId = book.storeId ?: ""
+        val store = if (storeId.isNotEmpty()) db.collection("stores").document(storeId).get().await().toObject(Store::class.java) else null
         val bookWithInfo = book.copy(
             storeName = store?.name ?: book.storeName,
             displayStoreName = store?.name ?: book.storeName,
             ownerId = store?.ownerId ?: book.ownerId
         )
-        db.collection("books").document(book.id).set(bookWithInfo).await()
+        val bookMap = hashMapOf(
+            "title" to bookWithInfo.title,
+            "author" to bookWithInfo.author,
+            "category" to bookWithInfo.category,
+            "description" to bookWithInfo.description,
+            "condition" to bookWithInfo.condition,
+            "price" to bookWithInfo.price,
+            "storeId" to bookWithInfo.storeId,
+            "storeName" to bookWithInfo.storeName,
+            "ownerId" to bookWithInfo.ownerId,
+            "displayStoreName" to bookWithInfo.displayStoreName,
+            "available" to bookWithInfo.available,
+            "rating" to bookWithInfo.rating,
+            "reviewCount" to bookWithInfo.reviewCount,
+            "startDate" to bookWithInfo.startDate,
+            "endDate" to bookWithInfo.endDate
+        )
+        db.collection("books").document(book.id).set(bookMap).await()
     }
     suspend fun deleteBook(id: String) { db.collection("books").document(id).delete().await() }
 
@@ -225,86 +276,12 @@ class FirestoreManager {
     }
 
     suspend fun resetAndSeed() {
-        // 1. Wipe out all books, stores, reservations, and reviews
-        val collections = listOf("books", "stores", "reservations", "reviews")
-        for (coll in collections) {
-            val snap = db.collection(coll).get().await()
-            for (doc in snap.documents) {
+        // Clear everything to allow a clean slate
+        val collections = listOf("users", "books", "stores", "reservations", "reviews")
+        for (collection in collections) {
+            val snapshot = db.collection(collection).get().await()
+            for (doc in snapshot.documents) {
                 doc.reference.delete().await()
-            }
-        }
-
-        // 2. Wipe out users who are seed owners (using predefined IDs)
-        val seedOwnerIds = listOf("owner_alpha", "owner_beta")
-        for (uid in seedOwnerIds) {
-            db.collection("users").document(uid).delete().await()
-        }
-
-        // 3. Create fresh seed owner users
-        val owners = listOf(
-            UserProfile(uid = "owner_alpha", name = "Alice Johnson", email = "alice@chapterone.com", role = "owner", phone = "1234567890"),
-            UserProfile(uid = "owner_beta", name = "Bob Smith", email = "bob@booknook.com", role = "owner", phone = "0987654321")
-        )
-
-        for (profile in owners) {
-            db.collection("users").document(profile.uid).set(profile).await()
-        }
-
-        // 4. Seed with fresh modern data
-        val newStores = listOf(
-            mapOf(
-                "name" to "Chapter One",
-                "location" to "City Center",
-                "ownerId" to "owner_alpha",
-                "desc" to "Specializing in classic literature and modern masterpieces."
-            ),
-            mapOf(
-                "name" to "The Book Nook",
-                "location" to "Westside Mall",
-                "ownerId" to "owner_beta",
-                "desc" to "Your friendly neighborhood spot for tech and sci-fi."
-            )
-        )
-
-        newStores.forEach { storeData ->
-            val storeRef = db.collection("stores").document()
-            val storeId = storeRef.id
-            val ownerId = storeData["ownerId"] as String
-            
-            // Update owner's profile with their storeId
-            db.collection("users").document(ownerId).update("storeId", storeId).await()
-
-            storeRef.set(Store(
-                id = storeId,
-                name = storeData["name"] as String,
-                ownerId = ownerId,
-                location = storeData["location"] as String,
-                description = storeData["desc"] as String
-            )).await()
-            
-            val categories = listOf("Fiction", "Tech", "Science", "History", "Children", "Non-Fiction")
-            val bookTitles = if (storeData["name"] == "Chapter One") {
-                listOf("The Great Gatsby", "Clean Code", "Cosmos", "Sapiens", "The Hobbit")
-            } else {
-                listOf("1984", "The Pragmatic Programmer", "A Brief History of Time", "Guns, Germs, and Steel", "Peter Pan")
-            }
-
-            bookTitles.forEachIndexed { i, title ->
-                db.collection("books").add(Book(
-                    title = title,
-                    author = "Author ${i + 1}",
-                    category = categories[i % categories.size],
-                    price = 300.0 + (i * 150),
-                    condition = "Like New",
-                    description = "A meticulously maintained copy of $title. Perfect for collectors.",
-                    rating = 4.0 + (i % 3) * 0.5,
-                    reviewCount = 10L + i,
-                    available = true,
-                    storeId = storeId,
-                    storeName = storeData["name"] as String,
-                    displayStoreName = storeData["name"] as String,
-                    ownerId = ownerId
-                )).await()
             }
         }
     }

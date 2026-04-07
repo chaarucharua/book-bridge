@@ -22,20 +22,23 @@ data class Store(
 
 data class Book(
     @DocumentId val id: String = "",
-    val title: String = "",
-    val author: String = "",
-    val category: String = "",
-    val description: String = "",
-    val condition: String = "",
+    val title: String? = "",
+    val author: String? = "",
+    val category: String? = "",
+    val description: String? = "",
+    val condition: String? = "",
     val price: Double = 0.0,
-    val storeId: String = "",
-    val storeName: String = "",
-    val ownerId: String = "",
-    val displayStoreName: String = "",
+    val storeId: String? = "",
+    val storeName: String? = "",
+    val ownerId: String? = "",
+    val displayStoreName: String? = "",
     val available: Boolean = true,
     val rating: Double = 0.0,
-    val reviewCount: Long = 0L
+    val reviewCount: Long = 0L,
+    val startDate: Long = System.currentTimeMillis(),
+    val endDate: Long = System.currentTimeMillis() + (7 * 24 * 60 * 60 * 1000L) // Default 7 days
 ) {
+    @get:com.google.firebase.firestore.Exclude
     val effectiveStoreName: String
         get() = when {
             !displayStoreName.isNullOrBlank() -> displayStoreName
@@ -48,7 +51,7 @@ data class Review(
     @DocumentId val id: String = "",
     val userId: String = "",
     val bookId: String = "",
-    val rating: Float = 0f,
+    val rating: Double = 0.0,
     val comment: String = "",
     val userName: String = "",
     val timestamp: Long = System.currentTimeMillis()
@@ -63,6 +66,7 @@ data class Reservation(
     val bookId: String = "",
     val bookTitle: String = "",
     val storeId: String = "",
+    val storeName: String = "",
     val startDate: Long = System.currentTimeMillis(),
     val endDate: Long = System.currentTimeMillis(),
     val status: String = "PENDING" // PENDING, APPROVED, REJECTED, COMPLETED

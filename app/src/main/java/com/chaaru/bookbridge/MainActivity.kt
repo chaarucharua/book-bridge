@@ -13,14 +13,15 @@ import com.chaaru.bookbridge.screen.*
 import com.chaaru.bookbridge.ui.theme.BookBridgeTheme
 import com.chaaru.bookbridge.viewmodel.AuthViewModel
 import com.chaaru.bookbridge.viewmodel.BooksViewModel
+import com.chaaru.bookbridge.viewmodel.ViewModelFactory
 import com.google.firebase.auth.FirebaseAuth
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Clear cached auth session on every app start to avoid using stale local data
-        FirebaseAuth.getInstance().signOut()
+        // Remove the automatic signOut to allow users to stay logged in
+        // FirebaseAuth.getInstance().signOut()
 
         setContent {
             BookBridgeTheme {
@@ -33,19 +34,28 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AppNavigation() {
     val navController = rememberNavController()
-    val authViewModel: AuthViewModel = viewModel()
-    val booksViewModel: BooksViewModel = viewModel()
+    val factory = ViewModelFactory()
+    val authViewModel: AuthViewModel = viewModel(factory = factory)
+    val booksViewModel: BooksViewModel = viewModel(factory = factory)
 
     val currentUser = authViewModel.profile.value
 
     NavHost(
         navController = navController,
-        startDestination = "login"
+        startDestination = "splash"
     ) {
+        composable("splash") {
+            SplashScreen {
+                navController.navigate("login") {
+                    popUpTo("splash") { inclusive = true }
+                }
+            }
+        }
+
         composable("login") {
             LoginScreen(viewModel = authViewModel) { role ->
-                val trimmedRole = role.trim().lowercase()
-                val destination = if (trimmedRole == "owner") "owner_dashboard" else "student_home"
+                val isOwner = role?.trim()?.equals("owner", ignoreCase = true) == true
+                val destination = if (isOwner) "owner_dashboard" else "student_home"
                 navController.navigate(destination) {
                     popUpTo("login") { inclusive = true }
                 }
@@ -79,6 +89,17 @@ fun AppNavigation() {
                 booksViewModel = booksViewModel,
                 authViewModel = authViewModel,
                 onNavigate = { route -> navController.navigate(route) },
+                onBack = { navController.popBackStack() },
+                onReservationClick = { resId -> navController.navigate("reservation_detail/$resId") }
+            )
+        }
+
+        composable("reservation_detail/{resId}") { backStackEntry ->
+            val resId = backStackEntry.arguments?.getString("resId") ?: return@composable
+            ReservationDetailScreen(
+                reservationId = resId,
+                booksViewModel = booksViewModel,
+                authViewModel = authViewModel,
                 onBack = { navController.popBackStack() }
             )
         }
@@ -89,6 +110,7 @@ fun AppNavigation() {
                 onNavigate = { route -> navController.navigate(route) },
                 onBack = { navController.popBackStack() },
                 onLogout = { 
+                    booksViewModel.clearState()
                     navController.navigate("login") { 
                         popUpTo(0) { inclusive = true }
                     }
