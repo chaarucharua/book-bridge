@@ -22,6 +22,39 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun VintageTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    primaryColor: Color,
+    secondaryColor: Color,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+    trailingIcon: @Composable (() -> Unit)? = null
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label, fontFamily = FontFamily.Serif) },
+        modifier = Modifier.fillMaxWidth(),
+        visualTransformation = visualTransformation,
+        trailingIcon = trailingIcon,
+        shape = RoundedCornerShape(8.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedTextColor = primaryColor,
+            unfocusedTextColor = primaryColor,
+            focusedBorderColor = secondaryColor,
+            unfocusedBorderColor = secondaryColor.copy(alpha = 0.5f),
+            focusedLabelColor = secondaryColor,
+            unfocusedLabelColor = primaryColor.copy(alpha = 0.7f),
+            cursorColor = secondaryColor,
+            focusedContainerColor = Color.White,
+            unfocusedContainerColor = Color.White
+        )
+    )
+}
+
 @Composable
 fun LoginScreen(viewModel: AuthViewModel, onNavigate: (String) -> Unit) {
     val context = LocalContext.current
@@ -159,7 +192,7 @@ fun LoginScreen(viewModel: AuthViewModel, onNavigate: (String) -> Unit) {
                         onClick = {
                             if (email.isNotEmpty()) {
                                 viewModel.resetPassword(email) {
-                                    // Handle success (e.g., show a toast)
+                                    // Handle success
                                 }
                             } else {
                                 viewModel.error.value = "Enter email to reset password"
@@ -180,7 +213,6 @@ fun LoginScreen(viewModel: AuthViewModel, onNavigate: (String) -> Unit) {
                 if (viewModel.isLoading.value) {
                     CircularProgressIndicator(color = burgundy)
                 } else {
-                    // Gold Accent CTA (10% accent color)
                     Button(
                         onClick = {
                             if (isRegistering) {
@@ -232,4 +264,3 @@ fun LoginScreen(viewModel: AuthViewModel, onNavigate: (String) -> Unit) {
         }
     }
 }
-

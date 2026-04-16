@@ -1,22 +1,22 @@
 package com.chaaru.bookbridge.viewmodel
 
+import android.content.Context
+import android.net.Uri
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.chaaru.bookbridge.data.firebase.*
+import com.chaaru.bookbridge.data.firebase.AuthManager
+import com.chaaru.bookbridge.data.firebase.FirestoreManager
 import com.chaaru.bookbridge.data.model.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-
-import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewmodel.CreationExtras
 
 class AuthViewModel(private val authManager: AuthManager) : ViewModel() {
     val profile = mutableStateOf<UserProfile?>(null)
     val isLoading = mutableStateOf(false)
     val error = mutableStateOf<String?>(null)
-    // ... rest of AuthViewModel
 
     init {
         authManager.currentUser()?.let {
@@ -24,12 +24,12 @@ class AuthViewModel(private val authManager: AuthManager) : ViewModel() {
         }
     }
 
-    fun login(email: String, password: String, onSuccess: (String) -> Unit) {
+    fun login(email: String, password: String, onNavigate: (String) -> Unit) {
         viewModelScope.launch {
             isLoading.value = true
             authManager.login(email, password).onSuccess {
                 profile.value = it
-                onSuccess(it.role)
+                onNavigate(it.role)
             }.onFailure {
                 error.value = it.message
             }
@@ -37,25 +37,12 @@ class AuthViewModel(private val authManager: AuthManager) : ViewModel() {
         }
     }
 
-    fun signInWithGoogle(idToken: String, onSuccess: (String) -> Unit) {
-        viewModelScope.launch {
-            isLoading.value = true
-            authManager.firebaseAuthWithGoogle(idToken).onSuccess {
-                profile.value = it
-                onSuccess(it.role)
-            }.onFailure {
-                error.value = it.message
-            }
-            isLoading.value = false
-        }
-    }
-
-    fun register(name: String, email: String, password: String, role: String, phone: String, storeName: String? = null, location: String? = null, onSuccess: (String) -> Unit) {
+    fun register(name: String, email: String, password: String, role: String, phone: String, storeName: String? = null, location: String? = null, onNavigate: (String) -> Unit) {
         viewModelScope.launch {
             isLoading.value = true
             authManager.register(name, email, password, role, phone, storeName, location).onSuccess {
                 profile.value = it
-                onSuccess(it.role)
+                onNavigate(it.role)
             }.onFailure {
                 error.value = it.message
             }
@@ -77,8 +64,9 @@ class AuthViewModel(private val authManager: AuthManager) : ViewModel() {
 
     fun updateProfile(profile: UserProfile) {
         viewModelScope.launch {
-            authManager.updateProfile(profile)
-            this@AuthViewModel.profile.value = profile
+            authManager.updateProfile(profile).onSuccess {
+                this@AuthViewModel.profile.value = profile
+            }
         }
     }
 
@@ -110,177 +98,198 @@ class AuthViewModel(private val authManager: AuthManager) : ViewModel() {
 
 class BooksViewModel(private val firestoreManager: FirestoreManager) : ViewModel() {
     private val _books = MutableStateFlow<List<Book>>(emptyList())
-    val allBooks: StateFlow<List<Book>> = _books.asStateFlow()
-    val stores = mutableStateListOf<Store>()
-    val favorites = mutableStateListOf<String>()
-    val reservations = mutableStateListOf<Reservation>()
-    val reviews = mutableStateListOf<Review>()
+    val allBooks: StateFlow<List<Book>> = _books.map { list ->
+        list.map { sanitizeBook(it) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    
+    private val _bookings = MutableStateFlow<List<Booking>>(emptyList())
+    val bookings: StateFlow<List<Booking>> = _bookings.asStateFlow()
+
+    private val _reviews = MutableStateFlow<List<Review>>(emptyList())
+    val reviews: StateFlow<List<Review>> = _reviews.map { list ->
+        // Safety: If there are suspiciously many reviews (dummy data artifact), hide them to match the reset book count
+        if (list.size >= 100) emptyList() else list
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val isLoading = mutableStateOf(false)
     val error = mutableStateOf<String?>(null)
-    private val _filterCategory = MutableStateFlow("All")
-    val filterCategory: StateFlow<String> = _filterCategory.asStateFlow()
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
-    val filteredBooks: StateFlow<List<Book>> = combine(_books, _filterCategory, _searchQuery) { books, category, query ->
+    val filteredBooks: StateFlow<List<Book>> = combine(allBooks, _searchQuery) { books, query ->
         books.filter { book ->
-            val matchesCategory = category == "All" || book.category == category
-            val matchesSearch = book.title?.contains(query, ignoreCase = true) == true ||
-                                book.author?.contains(query, ignoreCase = true) == true
-            matchesCategory && matchesSearch
+            val matchesSearch = book.title.contains(query, ignoreCase = true) ||
+                                book.author.contains(query, ignoreCase = true)
+            matchesSearch && book.available
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val recommendedBooks: StateFlow<List<Book>> = _books.map { books ->
-        books.sortedByDescending { it.rating }.take(5)
+    val recommendedBooks: StateFlow<List<Book>> = allBooks.map { books ->
+        books.filter { it.available }.sortedByDescending { it.rating }.take(5)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private fun sanitizeBook(book: Book): Book {
+        // Safety: If reviewCount is suspiciously high (legacy dummy data), reset it to 0 in UI
+        return if (book.reviewCount >= 100) {
+            book.copy(reviewCount = 0L, rating = 0.0)
+        } else {
+            book
+        }
+    }
 
     init {
-        loadBooks()
-        loadStores()
+        // We no longer call observeBooks here to avoid conflicts.
+        // The screens will trigger the specific observation they need.
     }
 
-    fun loadBooks(forceRefresh: Boolean = false) {
+    private var booksJob: kotlinx.coroutines.Job? = null
+
+    fun observeBooks() {
+        booksJob?.cancel()
+        booksJob = viewModelScope.launch {
+            firestoreManager.getBooksFlow().collect {
+                _books.value = it
+            }
+        }
+    }
+
+    fun observeOwnerBooks(storeId: String) {
+        booksJob?.cancel()
+        booksJob = viewModelScope.launch {
+            firestoreManager.getBooksFlow(storeId).collect {
+                _books.value = it
+            }
+        }
+    }
+
+    fun observeUserBookings(userId: String) {
+        viewModelScope.launch {
+            firestoreManager.getBookingsFlow(userId = userId).collect {
+                _bookings.value = it
+            }
+        }
+    }
+
+    fun observeStoreBookings(storeId: String) {
+        viewModelScope.launch {
+            firestoreManager.getBookingsFlow(storeId = storeId).collect {
+                _bookings.value = it
+            }
+        }
+    }
+
+    fun observeReviews(bookId: String) {
+        viewModelScope.launch {
+            firestoreManager.getReviewsFlow(bookId).collect { reviews ->
+                _reviews.value = reviews.sortedByDescending { it.timestamp }
+            }
+        }
+    }
+
+    fun addReview(review: Review, onSuccess: () -> Unit) {
         viewModelScope.launch {
             isLoading.value = true
-            _books.value = firestoreManager.getBooks()
+            firestoreManager.addReview(review).onSuccess {
+                onSuccess()
+            }.onFailure {
+                error.value = it.message
+            }
             isLoading.value = false
         }
-    }
-
-    fun loadOwnerBooks(storeId: String) {
-        viewModelScope.launch {
-            isLoading.value = true
-            _books.value = firestoreManager.getBooks(storeId = storeId)
-            isLoading.value = false
-        }
-    }
-
-    fun loadStores() {
-        viewModelScope.launch {
-            stores.clear()
-            stores.addAll(firestoreManager.getAllStores())
-        }
-    }
-
-    fun setCategory(category: String) {
-        _filterCategory.value = category
     }
 
     fun updateSearchQuery(query: String) {
         _searchQuery.value = query
     }
 
-    fun loadFavorites(userId: String) {
+    fun bookBook(booking: Booking, onSuccess: () -> Unit) {
         viewModelScope.launch {
-            favorites.clear()
-            favorites.addAll(firestoreManager.getFavorites(userId))
+            isLoading.value = true
+            firestoreManager.createBooking(booking).onSuccess {
+                onSuccess()
+            }.onFailure {
+                error.value = it.message
+            }
+            isLoading.value = false
         }
     }
 
-    fun toggleFavorite(userId: String, bookId: String) {
-        viewModelScope.launch {
-            if (firestoreManager.toggleFavorite(userId, bookId)) favorites.add(bookId)
-            else favorites.remove(bookId)
+    // Payment integration
+    private var pendingBooking: Booking? = null
+    private var onPaymentSuccessCallback: (() -> Unit)? = null
+
+    fun initiateBookingWithPayment(booking: Booking, onSuccess: () -> Unit) {
+        pendingBooking = booking
+        onPaymentSuccessCallback = onSuccess
+    }
+
+    fun onPaymentSuccess(paymentId: String) {
+        pendingBooking?.let { booking ->
+            val finalBooking = booking.copy(paymentId = paymentId, status = "advance_paid")
+            bookBook(finalBooking) {
+                onPaymentSuccessCallback?.invoke()
+                pendingBooking = null
+                onPaymentSuccessCallback = null
+            }
         }
     }
 
-    fun reserveBook(res: Reservation, onSuccess: () -> Unit, onError: (String) -> Unit) {
+    fun onPaymentError(message: String) {
+        error.value = message
+        pendingBooking = null
+        onPaymentSuccessCallback = null
+    }
+
+    fun updateBookingStatus(bookingId: String, status: String) {
         viewModelScope.launch {
-            firestoreManager.reserveBook(res).onSuccess { onSuccess() }.onFailure { onError(it.message ?: "Error") }
+            firestoreManager.updateBookingStatus(bookingId, status)
         }
     }
 
-    fun loadStudentReservations(userId: String) {
+    fun deleteBooking(bookingId: String, onSuccess: () -> Unit = {}) {
         viewModelScope.launch {
-            reservations.clear()
-            reservations.addAll(firestoreManager.getReservations(userId = userId))
+            isLoading.value = true
+            firestoreManager.deleteBooking(bookingId).onSuccess {
+                onSuccess()
+            }.onFailure {
+                error.value = it.message
+            }
+            isLoading.value = false
         }
     }
 
-    fun loadStoreReservations(storeId: String) {
+    fun uploadImage(context: Context, uri: Uri, onComplete: (String) -> Unit) {
         viewModelScope.launch {
-            reservations.clear()
-            reservations.addAll(firestoreManager.getReservations(storeId = storeId))
-        }
-    }
-
-    fun deleteReservation(id: String, userId: String) {
-        viewModelScope.launch {
-            firestoreManager.deleteReservation(id)
-            loadStudentReservations(userId)
-        }
-    }
-
-    fun loadReviews(bookId: String) {
-        viewModelScope.launch {
-            reviews.clear()
-            reviews.addAll(firestoreManager.getReviews(bookId))
-        }
-    }
-
-    fun addReview(review: Review) {
-        viewModelScope.launch {
-            firestoreManager.addReview(review)
-            loadReviews(review.bookId)
-        }
-    }
-
-    fun updateReservationStatus(id: String, status: String, storeId: String) {
-        viewModelScope.launch {
-            firestoreManager.updateReservationStatus(id, status)
-            loadStoreReservations(storeId)
-        }
-    }
-
-    fun updateReservationDates(id: String, startDate: Long, endDate: Long, storeId: String) {
-        viewModelScope.launch {
-            firestoreManager.updateReservationDates(id, startDate, endDate)
-            loadStoreReservations(storeId)
+            isLoading.value = true
+            val path = firestoreManager.saveImageLocally(context, uri)
+            onComplete(path)
+            isLoading.value = false
         }
     }
 
     fun addBook(book: Book) = viewModelScope.launch {
         isLoading.value = true
-        try {
-            firestoreManager.addBook(book)
-            loadOwnerBooks(book.storeId ?: "")
-        } catch (e: Exception) {
-            this@BooksViewModel.error.value = e.message
-        } finally {
-            isLoading.value = false
-        }
+        firestoreManager.addBook(book)
+        isLoading.value = false
     }
 
     fun updateBook(book: Book) = viewModelScope.launch {
         isLoading.value = true
-        try {
-            firestoreManager.updateBook(book)
-            loadOwnerBooks(book.storeId ?: "")
-        } catch (e: Exception) {
-            this@BooksViewModel.error.value = e.message
-        } finally {
-            isLoading.value = false
-        }
+        firestoreManager.updateBook(book)
+        isLoading.value = false
     }
 
-    fun deleteBook(id: String, storeId: String) {
+    fun deleteBook(id: String, imageUrl: String?) {
         viewModelScope.launch {
-            firestoreManager.deleteBook(id)
-            loadOwnerBooks(storeId)
+            firestoreManager.deleteBook(id, imageUrl)
         }
     }
 
     fun clearState() {
         _books.value = emptyList()
-        stores.clear()
-        favorites.clear()
-        reservations.clear()
-        reviews.clear()
+        _bookings.value = emptyList()
         _searchQuery.value = ""
-        _filterCategory.value = "All"
     }
 }
 

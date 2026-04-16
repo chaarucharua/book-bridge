@@ -1,364 +1,449 @@
 package com.chaaru.bookbridge.screen
 
+import android.content.Context
+import android.content.ContextWrapper
+import androidx.activity.ComponentActivity
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.ui.Alignment
-import androidx.compose.foundation.border
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.chaaru.bookbridge.ui.getCategoryIcon
-import com.chaaru.bookbridge.data.model.Reservation
+import androidx.compose.ui.unit.sp
+import androidx.navigation.NavController
+import com.chaaru.bookbridge.MainActivity
+import com.chaaru.bookbridge.data.model.Book
+import com.chaaru.bookbridge.data.model.Booking
 import com.chaaru.bookbridge.data.model.Review
 import com.chaaru.bookbridge.viewmodel.AuthViewModel
 import com.chaaru.bookbridge.viewmodel.BooksViewModel
-import java.text.SimpleDateFormat
-import java.util.*
-
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.RoundedCornerShape
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BookDetailScreen(bookId: String, booksViewModel: BooksViewModel, authViewModel: AuthViewModel, onBack: () -> Unit) {
-    val allBooks by booksViewModel.allBooks.collectAsState()
-    val book = allBooks.find { it.id == bookId }
-    val userProfile = authViewModel.profile.value
-    val isLoading = booksViewModel.isLoading.value
+fun BookDetailScreen(
+    bookId: String,
+    booksViewModel: BooksViewModel,
+    authViewModel: AuthViewModel,
+    navController: NavController
+) {
+    val books by booksViewModel.allBooks.collectAsState()
+    val book = books.find { it.id == bookId }
+    val user = authViewModel.profile.value
+    val reviews by booksViewModel.reviews.collectAsState()
+    var bookingStatus by remember { mutableStateOf<String?>(null) }
+    var isProcessing by remember { mutableStateOf(false) }
+    var showReviewDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
-    var rating by remember { mutableStateOf(5f) }
-    var comment by remember { mutableStateOf("") }
-    
-    // Simple Palette
-    val creamBackground = Color(0xFFF5F5DC)
-    val burgundy = Color(0xFF800020)
-    val charcoal = Color(0xFF333333)
-    val gold = Color(0xFFD4AF37)
+    LaunchedEffect(bookId) {
+        booksViewModel.observeReviews(bookId)
+    }
 
-    // Reservation date states
-    var startDate by remember(book) { mutableStateOf(book?.startDate ?: System.currentTimeMillis()) }
-    var endDate by remember(book) { mutableStateOf(book?.endDate ?: (System.currentTimeMillis() + 7 * 24 * 60 * 60 * 1000L)) }
-
-    val dateFormatter = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+    fun findActivity(context: Context): MainActivity? {
+        var currentContext = context
+        while (currentContext is ContextWrapper) {
+            if (currentContext is MainActivity) return currentContext
+            currentContext = currentContext.baseContext
+        }
+        return null
+    }
 
     if (book == null) {
-        Box(modifier = Modifier.fillMaxSize().background(creamBackground), contentAlignment = androidx.compose.ui.Alignment.Center) {
-            CircularProgressIndicator(color = burgundy)
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = Burgundy)
         }
         return
     }
 
-    LaunchedEffect(bookId) {
-        booksViewModel.loadReviews(bookId)
-    }
-
     Scaffold(
-        containerColor = creamBackground,
         topBar = {
             TopAppBar(
-                title = { 
-                    Text(
-                        "BOOK DETAILS", 
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontFamily = FontFamily.Serif,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 2.sp
-                        )
-                    ) 
-                },
+                title = { },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = gold)
+                    Surface(
+                        onClick = { navController.popBackStack() },
+                        shape = androidx.compose.foundation.shape.CircleShape,
+                        color = Color.White.copy(alpha = 0.8f),
+                        modifier = Modifier.padding(8.dp).size(40.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.ArrowBack, 
+                            "Back", 
+                            tint = Burgundy,
+                            modifier = Modifier.padding(8.dp)
+                        )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = burgundy,
-                    titleContentColor = gold
-                )
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
             )
-        }
-    ) { paddingValues ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(24.dp)
-        ) {
-            item {
-                // Book Icon Placeholder (Replacing Image)
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(300.dp)
-                        .padding(bottom = 24.dp)
-                        .background(burgundy.copy(alpha = 0.05f), RoundedCornerShape(8.dp))
-                        .border(1.dp, burgundy.copy(alpha = 0.1f), RoundedCornerShape(8.dp)),
-                    contentAlignment = Alignment.Center
+        },
+        bottomBar = {
+            if (book.status == "available") {
+                val advanceAmount = if (book.advancePrice > 0) book.advancePrice else book.price * 0.1
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shadowElevation = 16.dp,
+                    color = Color.White
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = getCategoryIcon(book.category ?: ""),
-                            contentDescription = book.category,
-                            modifier = Modifier.size(120.dp),
-                            tint = burgundy.copy(alpha = 0.8f)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Surface(
-                            color = gold,
-                            shape = RoundedCornerShape(16.dp)
-                        ) {
+                    Row(
+                        modifier = Modifier
+                            .padding(16.dp)
+                            .navigationBarsPadding(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = book.category ?: "Uncategorized",
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = burgundy
+                                "Total: ₹${book.price.toInt()}",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = Slate500
+                            )
+                            Text(
+                                "Advance: ₹${advanceAmount.toInt()}",
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = Burgundy
+                                )
+                            )
+                        }
+                        
+                        Button(
+                            onClick = {
+                                isProcessing = true
+                                val booking = Booking(
+                                    userId = user?.uid ?: "",
+                                    studentName = user?.name ?: "Anonymous",
+                                    studentPhone = user?.phone ?: "",
+                                    studentEmail = user?.email ?: "",
+                                    bookId = book.id,
+                                    bookTitle = book.title,
+                                    bookImageUrl = book.imageUrl,
+                                    storeId = book.storeId,
+                                    storeUpi = book.storeUpi,
+                                    advancePaid = advanceAmount,
+                                    totalPrice = book.price,
+                                    status = "pending_payment"
+                                )
+                                
+                                booksViewModel.initiateBookingWithPayment(booking) {
+                                    isProcessing = false
+                                    // bookingStatus = "Reserved! Visit store for final payment."
+                                }
+
+                                findActivity(context)?.startPayment(
+                                    amount = advanceAmount,
+                                    email = user?.email ?: "",
+                                    contact = user?.phone ?: ""
+                                )
+                            },
+                            modifier = Modifier
+                                .weight(1.5f)
+                                .height(56.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Burgundy),
+                            shape = RoundedCornerShape(12.dp),
+                            enabled = !isProcessing
+                        ) {
+                            if (isProcessing) {
+                                CircularProgressIndicator(color = White, modifier = Modifier.size(24.dp))
+                            } else {
+                                Text("Reserve Now", style = MaterialTheme.typography.titleMedium)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        containerColor = Parchment
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .padding(bottom = if(book.status == "available") 88.dp else 0.dp) // Avoid overlap with bottom bar
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+        ) {
+            Box(modifier = Modifier.fillMaxWidth().height(360.dp)) {
+                BookImage(book.imageUrl, Modifier.fillMaxSize())
+            }
+            
+            Column(modifier = Modifier.padding(24.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            book.title, 
+                            style = MaterialTheme.typography.headlineMedium.copy(
+                                fontFamily = FontFamily.Serif, 
+                                fontWeight = FontWeight.Bold, 
+                                color = Slate900
+                            )
+                        )
+                        Text(
+                            "by ${book.author}", 
+                            style = MaterialTheme.typography.titleMedium.copy(color = Slate600)
+                        )
+                    }
+                    
+                    Surface(
+                        color = BurgundyLight.copy(alpha = 0.1f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            book.category,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Burgundy
+                        )
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    InfoChip(Icons.Default.Star, "${book.rating} (${book.reviewCount})", "Rating")
+                    InfoChip(Icons.Default.MenuBook, book.condition, "Condition")
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        BookStatusBadge(book.status, Modifier.padding(bottom = 4.dp))
+                        Text("Status", style = MaterialTheme.typography.labelSmall, color = Slate500)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(32.dp))
+                
+                Text(
+                    "Description", 
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = Slate900)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    book.description,
+                    style = MaterialTheme.typography.bodyLarge.copy(color = Slate700, lineHeight = 24.sp)
+                )
+                
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                HorizontalDivider(color = Slate200)
+                
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                Text(
+                    "Store Information", 
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = Slate900)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                DetailRow("Store Name", book.storeName)
+                DetailRow("UPI ID", book.storeUpi)
+                DetailRow("Owner ID", book.ownerId) // Ideally fetch store phone/email
+
+                Spacer(modifier = Modifier.height(32.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Reviews (${reviews.size})", 
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = Slate900)
+                    )
+                    TextButton(onClick = { showReviewDialog = true }) {
+                        Text("Add Review", color = Burgundy, fontWeight = FontWeight.Bold)
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                if (reviews.isNotEmpty()) {
+                    reviews.forEach { review ->
+                        ReviewItem(review)
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
+                }
+
+                if (book.status != "available") {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = if (book.status == "sold") RedBg else AmberBg,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Info, 
+                                contentDescription = null, 
+                                tint = if (book.status == "sold") Color.Red else AmberText
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                if (book.status == "sold") "This book has been sold." else "This book is currently reserved.",
+                                color = if (book.status == "sold") Color.Red else AmberText
                             )
                         }
                     }
                 }
 
-                Text(
-                    book.title ?: "Untitled", 
-                    style = MaterialTheme.typography.headlineMedium.copy(fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold), 
-                    color = burgundy
-                )
-                Text(
-                    "by ${book.author ?: "Unknown Author"}", 
-                    style = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Serif),
-                    color = charcoal.copy(alpha = 0.7f)
-                )
-                
-                Spacer(modifier = Modifier.height(24.dp))
-                
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    color = burgundy,
-                    shape = RoundedCornerShape(8.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, gold.copy(alpha = 0.5f))
-                ) {
-                    Column(modifier = Modifier.padding(20.dp)) {
-                        DetailRow("Store", book.effectiveStoreName, gold, creamBackground)
-                        DetailRow("Category", book.category ?: "Uncategorized", gold, creamBackground)
-                        DetailRow("Condition", book.condition ?: "Used", gold, creamBackground)
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            "Price: ₹${book.price}", 
-                            style = MaterialTheme.typography.headlineSmall.copy(fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold), 
-                            color = gold
-                        )
-                    }
-                }
-                
-                Spacer(modifier = Modifier.height(24.dp))
-                Text(
-                    "Description", 
-                    style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold),
-                    color = burgundy
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    book.description ?: "No description available.", 
-                    style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Serif, lineHeight = 24.sp),
-                    color = charcoal
-                )
-                
-                Spacer(modifier = Modifier.height(32.dp))
-                HorizontalDivider(thickness = 1.dp, color = burgundy.copy(alpha = 0.1f))
-                Spacer(modifier = Modifier.height(32.dp))
-                
-                Text(
-                    "Reservation Period", 
-                    style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold),
-                    color = burgundy
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(), 
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-                ) {
-                    DateBox("Start Date", dateFormatter.format(Date(startDate)), burgundy, gold)
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(20.dp), tint = burgundy.copy(alpha = 0.3f))
-                    DateBox("End Date", dateFormatter.format(Date(endDate)), burgundy, gold)
-                }
-                
-                Spacer(modifier = Modifier.height(24.dp))
-                
-                if (isLoading) {
-                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.Center) {
-                        CircularProgressIndicator(color = burgundy)
-                    }
-                } else {
-                    Button(
-                        onClick = {
-                            if (userProfile != null) {
-                                booksViewModel.reserveBook(
-                                    res = Reservation(
-                                        userId = userProfile.uid,
-                                        userName = userProfile.name,
-                                        userEmail = userProfile.email,
-                                        userPhone = userProfile.phone,
-                                        bookId = book.id,
-                                        bookTitle = book.title ?: "Unknown Book",
-                                        storeId = book.storeId ?: "Unknown Store",
-                                        startDate = startDate,
-                                        endDate = endDate,
-                                        status = "PENDING",
-                                        storeName = book.effectiveStoreName
-                                    ),
-                                    onSuccess = { onBack() },
-                                    onError = { /* handle error */ }
-                                )
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = burgundy),
-                        shape = RoundedCornerShape(4.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, gold)
+                bookingStatus?.let {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = GreenBg),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            "RESERVE NOW", 
-                            color = gold,
-                            style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold)
+                            it, 
+                            modifier = Modifier.padding(16.dp), 
+                            color = GreenText,
+                            fontWeight = FontWeight.Bold
                         )
                     }
-                }
-
-                Spacer(modifier = Modifier.height(48.dp))
-                Text(
-                    "Reviews", 
-                    style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold),
-                    color = burgundy
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                OutlinedTextField(
-                    value = comment, 
-                    onValueChange = { if (it.length <= 500) comment = it }, 
-                    placeholder = { Text("Write a review...", fontFamily = FontFamily.Serif) }, 
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = charcoal,
-                        unfocusedTextColor = charcoal,
-                        focusedBorderColor = burgundy,
-                        unfocusedBorderColor = burgundy.copy(alpha = 0.2f),
-                        cursorColor = burgundy
-                    ),
-                    shape = RoundedCornerShape(4.dp)
-                )
-                
-                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
-                    Text("Rating: ${rating.toInt()}/5", fontFamily = FontFamily.Serif, color = charcoal)
-                    Slider(
-                        value = rating,
-                        onValueChange = { rating = it },
-                        valueRange = 1f..5f,
-                        steps = 3,
-                        modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
-                        colors = SliderDefaults.colors(
-                            thumbColor = burgundy,
-                            activeTrackColor = burgundy,
-                            inactiveTrackColor = burgundy.copy(alpha = 0.1f)
-                        )
-                    )
-                }
-
-                Button(
-                    onClick = {
-                        if (userProfile != null && comment.isNotBlank()) {
-                            booksViewModel.addReview(Review(userId = userProfile.uid, bookId = book.id, rating = rating.toDouble(), comment = comment.trim(), userName = userProfile.name))
-                            comment = ""
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
-                    shape = RoundedCornerShape(4.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, burgundy)
-                ) {
-                    Text("POST REVIEW", color = burgundy, style = MaterialTheme.typography.labelLarge.copy(fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold))
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-            }
-
-            if (booksViewModel.reviews.isEmpty()) {
-                item {
-                    Text(
-                        "No reviews yet.", 
-                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Serif, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
-                        color = charcoal.copy(alpha = 0.5f)
-                    )
-                }
-            } else {
-                items(booksViewModel.reviews) { review ->
-                    ReviewItem(review, burgundy, charcoal, gold)
+                    LaunchedEffect(Unit) {
+                        kotlinx.coroutines.delay(2000)
+                        navController.popBackStack()
+                    }
                 }
             }
         }
     }
-}
 
-
-
-@Composable
-fun DetailRow(label: String, value: String, labelColor: Color, valueColor: Color) {
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, style = MaterialTheme.typography.labelLarge.copy(fontFamily = FontFamily.Serif), color = valueColor.copy(alpha = 0.6f))
-        Text(value, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold), color = labelColor)
+    if (showReviewDialog) {
+        AddReviewDialog(
+            onDismiss = { showReviewDialog = false },
+            onSubmit = { rating, comment ->
+                val review = Review(
+                    userId = user?.uid ?: "",
+                    userName = user?.name ?: "Anonymous",
+                    bookId = bookId,
+                    rating = rating,
+                    comment = comment
+                )
+                booksViewModel.addReview(review) {
+                    showReviewDialog = false
+                }
+            }
+        )
     }
 }
 
 @Composable
-fun DateBox(label: String, date: String, burgundy: Color, gold: Color) {
-    Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
-        Text(label, style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Serif), color = burgundy.copy(alpha = 0.6f))
-        Surface(
-            color = Color.Transparent,
-            border = androidx.compose.foundation.BorderStroke(0.5.dp, burgundy.copy(alpha = 0.3f)),
-            shape = RoundedCornerShape(4.dp)
-        ) {
-            Text(
-                date, 
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                color = burgundy
-            )
-        }
-    }
-}
-
-@Composable
-fun ReviewItem(review: Review, burgundy: Color, charcoal: Color, gold: Color) {
+fun ReviewItem(review: Review) {
     Card(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-        border = androidx.compose.foundation.BorderStroke(0.5.dp, burgundy.copy(alpha = 0.1f)),
-        shape = RoundedCornerShape(4.dp)
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = White),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
-                    review.userName.uppercase(), 
-                    style = MaterialTheme.typography.labelLarge.copy(fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, letterSpacing = 1.sp), 
-                    color = burgundy
+                    review.userName,
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = Slate900)
                 )
-                Text("⭐ ${review.rating.toInt()}/5", color = gold, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Star, contentDescription = null, tint = AmberText, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        "${review.rating}",
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold, color = Slate700)
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                review.comment, 
-                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Serif, lineHeight = 20.sp),
-                color = charcoal
+                review.comment,
+                style = MaterialTheme.typography.bodyMedium.copy(color = Slate700)
             )
         }
     }
 }
+
+@Composable
+fun AddReviewDialog(
+    onDismiss: () -> Unit,
+    onSubmit: (Double, String) -> Unit
+) {
+    var rating by remember { mutableStateOf(5.0) }
+    var comment by remember { mutableStateOf("") }
+    var isSubmitting by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = { if (!isSubmitting) onDismiss() },
+        title = { Text("Add a Review") },
+        text = {
+            Column {
+                Text("Rating: ${rating.toInt()}/5")
+                Slider(
+                    value = rating.toFloat(),
+                    onValueChange = { if (!isSubmitting) rating = it.toDouble() },
+                    valueRange = 1f..5f,
+                    steps = 3,
+                    colors = SliderDefaults.colors(thumbColor = Burgundy, activeTrackColor = Burgundy)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = comment,
+                    onValueChange = { if (!isSubmitting) comment = it },
+                    label = { Text("Comment") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                    enabled = !isSubmitting
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { 
+                    isSubmitting = true
+                    onSubmit(rating.toInt().toDouble(), comment) 
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Burgundy),
+                enabled = !isSubmitting
+            ) {
+                if (isSubmitting) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp), color = White, strokeWidth = 2.dp)
+                } else {
+                    Text("Submit")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !isSubmitting
+            ) {
+                Text("Cancel", color = Burgundy)
+            }
+        }
+    )
+}
+
+@Composable
+fun InfoChip(icon: androidx.compose.ui.graphics.vector.ImageVector, value: String, label: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Icon(icon, contentDescription = null, tint = Burgundy, modifier = Modifier.size(24.dp))
+        Text(value, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold, color = Slate900))
+        Text(label, style = MaterialTheme.typography.labelSmall, color = Slate500)
+    }
+}
+

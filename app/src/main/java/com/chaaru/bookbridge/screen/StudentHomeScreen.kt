@@ -1,384 +1,401 @@
 package com.chaaru.bookbridge.screen
 
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.chaaru.bookbridge.data.model.Book
-import com.chaaru.bookbridge.ui.getCategoryIcon
+import com.chaaru.bookbridge.data.model.Booking
 import com.chaaru.bookbridge.viewmodel.AuthViewModel
 import com.chaaru.bookbridge.viewmodel.BooksViewModel
 
-/**
- * ROOT CAUSE FOR EMPTY RECOMMENDED/SEARCH:
- * 1. Filtering logic in ViewModel was not handling empty results gracefully.
- * 2. Missing "No books found" feedback for the user.
- * 3. Search query was not being applied effectively to the dynamic list.
- */
-
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.sp
-
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StudentHomeScreen(viewModel: BooksViewModel, authViewModel: AuthViewModel, onNavigate: (String) -> Unit) {
-    val searchQuery by viewModel.searchQuery.collectAsState()
-    val filteredBooks by viewModel.filteredBooks.collectAsState()
-    val recommendedBooks by viewModel.recommendedBooks.collectAsState()
-    val filterCategory by viewModel.filterCategory.collectAsState()
-    val userProfile = authViewModel.profile.value
-    
-    // Simple Palette
-    val creamBackground = Color(0xFFF5F5DC)
-    val burgundy = Color(0xFF800020)
-    val charcoal = Color(0xFF333333)
-    val gold = Color(0xFFD4AF37)
+fun StudentHomeScreen(
+    booksViewModel: BooksViewModel,
+    authViewModel: AuthViewModel,
+    onNavigate: (String) -> Unit
+) {
+    val books by booksViewModel.filteredBooks.collectAsState()
+    val recommended by booksViewModel.recommendedBooks.collectAsState()
+    val bookings by booksViewModel.bookings.collectAsState()
+    val searchQuery by booksViewModel.searchQuery.collectAsState()
+    val user = authViewModel.profile.value
 
-    LaunchedEffect(Unit) {
-        viewModel.loadBooks()
+    LaunchedEffect(user?.uid) {
+        booksViewModel.observeBooks()
+        user?.uid?.let { booksViewModel.observeUserBookings(it) }
     }
-    
-    val categories = listOf("All", "Fiction", "Non-Fiction", "Science", "Tech", "Children", "History")
 
     Scaffold(
-        containerColor = creamBackground,
-        bottomBar = {
-            NavigationBar(
-                containerColor = burgundy,
-                contentColor = gold
-            ) {
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    label = { Text("Books", fontFamily = FontFamily.Serif) },
-                    selected = true,
-                    onClick = {},
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = gold,
-                        selectedTextColor = gold,
-                        unselectedIconColor = gold.copy(alpha = 0.5f),
-                        unselectedTextColor = gold.copy(alpha = 0.5f),
-                        indicatorColor = burgundy.copy(alpha = 0.1f)
-                    )
-                )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.List, contentDescription = null) },
-                    label = { Text("Reservations", fontFamily = FontFamily.Serif) },
-                    selected = false,
-                    onClick = { onNavigate("reservations") },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = gold,
-                        selectedTextColor = gold,
-                        unselectedIconColor = gold.copy(alpha = 0.5f),
-                        unselectedTextColor = gold.copy(alpha = 0.5f),
-                        indicatorColor = burgundy.copy(alpha = 0.1f)
-                    )
-                )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Person, contentDescription = null) },
-                    label = { Text("Profile", fontFamily = FontFamily.Serif) },
-                    selected = false,
-                    onClick = { onNavigate("profile") },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = gold,
-                        selectedTextColor = gold,
-                        unselectedIconColor = gold.copy(alpha = 0.5f),
-                        unselectedTextColor = gold.copy(alpha = 0.5f),
-                        indicatorColor = burgundy.copy(alpha = 0.1f)
-                    )
-                )
-            }
-        }
-    ) { paddingValues ->
-        LazyColumn(
+        topBar = {
+            TopAppBar(
+                title = { 
+                    Column {
+                        Text(
+                            "Hi, ${user?.name ?: "Reader"}", 
+                            style = MaterialTheme.typography.headlineSmall.copy(
+                                fontFamily = FontFamily.Serif, 
+                                fontWeight = FontWeight.Bold, 
+                                color = Burgundy
+                            )
+                        )
+                        Text(
+                            "Find your next great read 📚", 
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = Slate600,
+                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                            )
+                        )
+                    }
+                },
+                actions = {
+                    Surface(
+                        onClick = { onNavigate("chat") },
+                        shape = CircleShape,
+                        color = Burgundy.copy(alpha = 0.05f),
+                        modifier = Modifier.padding(end = 8.dp).size(40.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.Chat, "AI Chat", tint = Burgundy, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                    Surface(
+                        onClick = { onNavigate("profile") },
+                        shape = CircleShape,
+                        color = Burgundy.copy(alpha = 0.05f),
+                        modifier = Modifier.padding(end = 16.dp).size(40.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.Person, "Profile", tint = Burgundy, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Parchment)
+            )
+        },
+        containerColor = Parchment
+    ) { padding ->
+        Column(
             modifier = Modifier
+                .padding(padding)
                 .fillMaxSize()
-                .padding(paddingValues),
-            contentPadding = PaddingValues(bottom = 16.dp)
         ) {
-            // Header Block
-            item {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(160.dp),
-                    color = burgundy
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(24.dp),
-                        verticalArrangement = Arrangement.Bottom
-                    ) {
-                        Text(
-                            "Hi, ${userProfile?.name ?: "Reader"}",
-                            style = MaterialTheme.typography.headlineMedium.copy(
-                                fontFamily = FontFamily.Serif,
-                                fontWeight = FontWeight.Bold
-                            ),
-                            color = gold
-                        )
-                        Text(
-                            "Find your next great read",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Serif),
-                            color = creamBackground.copy(alpha = 0.7f)
-                        )
-                    }
-                }
-            }
+            // Search Bar
+            SearchBar(
+                query = searchQuery,
+                onQueryChange = { booksViewModel.updateSearchQuery(it) },
+                modifier = Modifier.padding(16.dp)
+            )
 
-            item {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { viewModel.updateSearchQuery(it) },
-                        placeholder = { Text("Search title, author, or shop...", fontFamily = FontFamily.Serif) },
-                        modifier = Modifier.fillMaxWidth(),
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = burgundy) },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = charcoal,
-                            unfocusedTextColor = charcoal,
-                            focusedBorderColor = burgundy,
-                            unfocusedBorderColor = burgundy.copy(alpha = 0.3f),
-                            cursorColor = burgundy
-                        ),
-                        shape = MaterialTheme.shapes.medium
-                    )
-
-                    if (searchQuery.isEmpty()) {
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        LazyRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(categories) { category ->
-                                FilterChip(
-                                    selected = filterCategory == category,
-                                    onClick = { viewModel.setCategory(category) },
-                                    label = { Text(category, fontFamily = FontFamily.Serif) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = burgundy,
-                                        selectedLabelColor = gold,
-                                        containerColor = Color.Transparent,
-                                        labelColor = charcoal
-                                    ),
-                                    border = FilterChipDefaults.filterChipBorder(
-                                        borderColor = if (filterCategory == category) Color.Transparent else burgundy.copy(alpha = 0.2f),
-                                        selectedBorderColor = Color.Transparent,
-                                        borderWidth = 1.dp,
-                                        selectedBorderWidth = 1.dp,
-                                        enabled = true,
-                                        selected = filterCategory == category
-                                    )
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (searchQuery.isEmpty() && recommendedBooks.isNotEmpty()) {
-                item {
-                    Text(
-                        "Recommended",
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontFamily = FontFamily.Serif,
-                            fontWeight = FontWeight.Bold
-                        ),
-                        color = burgundy
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        contentPadding = PaddingValues(horizontal = 16.dp)
-                    ) {
-                        items(recommendedBooks) { book ->
-                            RecommendedBookItem(book, burgundy, creamBackground, gold) { onNavigate("book_detail/${book.id}") }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(24.dp))
-                }
-            }
-
-            if (searchQuery.isEmpty()) {
-                item {
-                    Text(
-                        "Available Books",
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontFamily = FontFamily.Serif,
-                            fontWeight = FontWeight.Bold
-                        ),
-                        color = burgundy
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-            } else {
-                item {
-                    Text(
-                        "Search Results",
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontFamily = FontFamily.Serif,
-                            fontWeight = FontWeight.Bold
-                        ),
-                        color = burgundy
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-            }
-
-            if (viewModel.isLoading.value) {
-                item {
-                    Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = burgundy)
-                    }
-                }
-            } else if (filteredBooks.isEmpty()) {
-                item {
-                    Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("No books found", fontFamily = FontFamily.Serif, color = charcoal.copy(alpha = 0.5f))
-                            Button(
-                                onClick = { viewModel.loadBooks(forceRefresh = true) },
-                                modifier = Modifier.padding(top = 16.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = burgundy),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, gold)
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 24.dp)
+            ) {
+                if (searchQuery.isEmpty()) {
+                    // Bookings Section
+                    if (bookings.isNotEmpty()) {
+                        item {
+                            SectionHeader("Your Active Bookings", onViewAll = { onNavigate("my_bookings") })
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
                             ) {
-                                Text("Refresh", color = gold, fontFamily = FontFamily.Serif)
+                                items(bookings.filter { it.status == "advance_paid" }.take(5)) { booking ->
+                                    BookingPreviewCard(booking) { onNavigate("booking_detail/${booking.id}") }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(24.dp))
+                        }
+                    }
+
+                    // Recommended Section
+                    item {
+                        SectionHeader("Curated for You")
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            items(recommended) { book ->
+                                RecommendedBookCard(book) { onNavigate("book_detail/${book.id}") }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(32.dp))
+                    }
+
+                    item {
+                        SectionHeader("Explore All Books")
+                    }
+                } else {
+                    item {
+                        SectionHeader("Search Results for \"$searchQuery\"")
+                    }
+                }
+
+                // 2-Column Grid using items
+                val columns = 2
+                val rows = books.chunked(columns)
+                items(rows) { rowBooks ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        rowBooks.forEach { book ->
+                            Box(modifier = Modifier.weight(1f)) {
+                                VerticalBookCard(book) { onNavigate("book_detail/${book.id}") }
+                            }
+                        }
+                        if (rowBooks.size < columns) {
+                            repeat(columns - rowBooks.size) {
+                                Spacer(modifier = Modifier.weight(1f))
                             }
                         }
                     }
                 }
-            } else {
-                items(filteredBooks, key = { it.id }) { book ->
-                    Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                        BookItem(book, burgundy, creamBackground, gold, charcoal) { onNavigate("book_detail/${book.id}") }
-                    }
-                }
             }
         }
     }
 }
 
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RecommendedBookItem(book: Book, burgundy: Color, cream: Color, gold: Color, onClick: () -> Unit) {
+fun BookingPreviewCard(booking: Booking, onClick: () -> Unit) {
     Card(
-        onClick = onClick,
-        modifier = Modifier.width(220.dp),
-        colors = CardDefaults.cardColors(containerColor = burgundy),
-        shape = MaterialTheme.shapes.medium,
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Surface(
-                modifier = Modifier.fillMaxWidth().height(160.dp),
-                color = cream.copy(alpha = 0.1f),
-                shape = MaterialTheme.shapes.small,
-                border = androidx.compose.foundation.BorderStroke(0.5.dp, gold.copy(alpha = 0.3f))
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = getCategoryIcon(book.category ?: ""),
-                        contentDescription = null,
-                        modifier = Modifier.size(64.dp),
-                        tint = gold.copy(alpha = 0.8f)
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                book.title ?: "Untitled", 
-                style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Serif), 
-                maxLines = 1, 
-                color = gold
-            )
-            Text(
-                book.author ?: "Unknown Author",
-                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Serif), 
-                color = cream.copy(alpha = 0.6f)
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("⭐ ${book.rating}", style = MaterialTheme.typography.labelMedium, color = gold)
-                Text("₹${book.price}", style = MaterialTheme.typography.titleSmall, color = cream, fontWeight = FontWeight.Bold)
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun BookItem(book: Book, burgundy: Color, cream: Color, gold: Color, charcoal: Color, onClick: () -> Unit) {
-    Card(
-        onClick = onClick, 
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(0.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        modifier = Modifier
+            .width(280.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = White),
+        elevation = CardDefaults.cardElevation(2.dp)
     ) {
         Row(
-            modifier = Modifier.padding(vertical = 12.dp),
+            modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Surface(
-                modifier = Modifier.size(60.dp),
-                color = burgundy.copy(alpha = 0.1f),
-                shape = MaterialTheme.shapes.extraSmall,
-                border = androidx.compose.foundation.BorderStroke(1.dp, gold.copy(alpha = 0.5f))
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = getCategoryIcon(book.category ?: ""),
-                        contentDescription = null,
-                        modifier = Modifier.size(32.dp),
-                        tint = burgundy.copy(alpha = 0.6f)
-                    )
-                }
+            Box(modifier = Modifier.size(70.dp).clip(RoundedCornerShape(12.dp))) {
+                BookImage(imageUrl = booking.bookImageUrl, modifier = Modifier.fillMaxSize())
             }
             Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    book.title ?: "Untitled",
-                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Serif), 
-                    color = burgundy
+                    booking.bookTitle, 
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), 
+                    maxLines = 1, 
+                    overflow = TextOverflow.Ellipsis,
+                    color = Slate900
                 )
                 Text(
-                    "${book.author ?: "Unknown Author"} • ${book.category ?: "Uncategorized"}",
-                    style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Serif), 
-                    color = charcoal.copy(alpha = 0.6f)
+                    "₹${booking.advancePaid.toInt()} Paid", 
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold), 
+                    color = GreenText
                 )
+                Spacer(modifier = Modifier.height(4.dp))
+                StatusBadge(booking.status)
+            }
+        }
+    }
+}
+
+@Composable
+fun RecommendedBookCard(book: Book, onClick: () -> Unit) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier.width(170.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = White),
+        elevation = CardDefaults.cardElevation(6.dp)
+    ) {
+        Column {
+            Box(modifier = Modifier.height(200.dp).fillMaxWidth()) {
+                BookImage(book.imageUrl, Modifier.fillMaxSize())
+                Surface(
+                    color = Burgundy,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        "₹${book.price.toInt()}", 
+                        color = White, 
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp), 
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                }
+            }
+            Column(modifier = Modifier.padding(12.dp)) {
                 Text(
-                    book.effectiveStoreName.uppercase(),
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontFamily = FontFamily.Serif,
-                        letterSpacing = 1.sp
-                    ), 
-                    color = gold,
-                    fontWeight = FontWeight.Bold
+                    book.title, 
+                    maxLines = 1, 
+                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold), 
+                    overflow = TextOverflow.Ellipsis,
+                    color = Slate900
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 4.dp)
+                ) {
+                    Icon(Icons.Default.Star, contentDescription = null, tint = AmberText, modifier = Modifier.size(16.dp))
+                    Text(
+                        "${book.rating} (${book.reviewCount})", 
+                        style = MaterialTheme.typography.bodySmall, 
+                        modifier = Modifier.padding(start = 4.dp),
+                        color = Slate600
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        book.condition, 
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Burgundy.copy(alpha = 0.7f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun VerticalBookCard(book: Book, onClick: () -> Unit) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(280.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = White),
+        elevation = CardDefaults.cardElevation(2.dp)
+    ) {
+        Column {
+            Box(modifier = Modifier.height(180.dp).fillMaxWidth()) {
+                BookImage(book.imageUrl, Modifier.fillMaxSize())
+                BookStatusBadge(
+                    book.status, 
+                    Modifier.align(Alignment.BottomStart).padding(8.dp)
                 )
             }
-            Text(
-                "₹${book.price}", 
-                style = MaterialTheme.typography.titleMedium, 
-                color = burgundy, 
-                fontWeight = FontWeight.Bold
-            )
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    book.title, 
+                    maxLines = 1, 
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), 
+                    overflow = TextOverflow.Ellipsis,
+                    color = Slate900
+                )
+                Text(
+                    book.author, 
+                    maxLines = 1, 
+                    style = MaterialTheme.typography.bodySmall, 
+                    color = Slate600, 
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                Row(
+                    modifier = Modifier.fillMaxWidth(), 
+                    horizontalArrangement = Arrangement.SpaceBetween, 
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "₹${book.price.toInt()}", 
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), 
+                        color = Burgundy
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Star, contentDescription = null, tint = AmberText, modifier = Modifier.size(14.dp))
+                        Text(
+                            "${book.rating} (${book.reviewCount})", 
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(start = 4.dp),
+                            color = Slate600
+                        )
+                    }
+                }
+            }
         }
-        HorizontalDivider(modifier = Modifier.padding(top = 8.dp), thickness = 0.5.dp, color = burgundy.copy(alpha = 0.1f))
+    }
+}
+
+
+@Composable
+fun SectionHeader(title: String, onViewAll: (() -> Unit)? = null) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Burgundy)
+        )
+        if (onViewAll != null) {
+            TextButton(
+                onClick = onViewAll,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    "View All",
+                    style = MaterialTheme.typography.labelLarge.copy(
+                        color = Burgundy,
+                        fontWeight = FontWeight.Bold
+                    )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SearchBar(query: String, onQueryChange: (String) -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = White,
+        shape = RoundedCornerShape(16.dp),
+        shadowElevation = 4.dp
+    ) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            placeholder = { Text("Search by title, author, or category...", color = Slate400) },
+            modifier = Modifier.fillMaxWidth(),
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Burgundy) },
+            trailingIcon = {
+                if (query.isNotEmpty()) {
+                    IconButton(onClick = { onQueryChange("") }) {
+                        Icon(Icons.Default.Clear, contentDescription = "Clear", tint = Slate500)
+                    }
+                }
+            },
+            shape = RoundedCornerShape(16.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Burgundy,
+                unfocusedBorderColor = Color.Transparent,
+                focusedContainerColor = White,
+                unfocusedContainerColor = White
+            ),
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodyLarge
+        )
     }
 }

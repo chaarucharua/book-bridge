@@ -1,6 +1,7 @@
 package com.chaaru.bookbridge
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.material3.*
@@ -10,33 +11,77 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.chaaru.bookbridge.screen.*
-import com.chaaru.bookbridge.ui.theme.BookBridgeTheme
 import com.chaaru.bookbridge.viewmodel.AuthViewModel
 import com.chaaru.bookbridge.viewmodel.BooksViewModel
 import com.chaaru.bookbridge.viewmodel.ViewModelFactory
 import com.google.firebase.auth.FirebaseAuth
+import com.razorpay.Checkout
+import com.razorpay.PaymentResultListener
+import org.json.JSONObject
 
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), PaymentResultListener {
+    private lateinit var booksViewModel: BooksViewModel
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Checkout.preload(applicationContext)
         
-        // Remove the automatic signOut to allow users to stay logged in
-        // FirebaseAuth.getInstance().signOut()
-
         setContent {
+            val factory = ViewModelFactory()
+            booksViewModel = viewModel(factory = factory)
+            val authViewModel: AuthViewModel = viewModel(factory = factory)
+
             BookBridgeTheme {
-                AppNavigation()
+                AppNavigation(authViewModel, booksViewModel)
             }
         }
+    }
+
+    fun startPayment(amount: Double, email: String, contact: String) {
+        val checkout = Checkout()
+        checkout.setKeyID("rzp_test_ScvZyKnCdPQ8gl") // Replace with actual key
+        try {
+            val options = JSONObject()
+            options.put("name", "Book Bridge")
+            options.put("description", "Advance Booking Payment")
+            options.put("theme.color", "#722F37")
+            options.put("currency", "INR")
+            options.put("amount", (amount * 100).toInt()) // Amount in paise
+            options.put("prefill.email", email)
+            options.put("prefill.contact", contact)
+            
+            // Explicitly enable UPI and other methods
+            val methodObj = JSONObject()
+            methodObj.put("netbanking", true)
+            methodObj.put("card", true)
+            methodObj.put("upi", true)
+            methodObj.put("wallet", true)
+            options.put("method", methodObj)
+
+            // Prioritize UPI and enable retries
+            val retryObj = JSONObject()
+            retryObj.put("enabled", true)
+            retryObj.put("max_count", 4)
+            options.put("retry", retryObj)
+            
+            checkout.open(this, options)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Error in payment: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    override fun onPaymentSuccess(razorpayPaymentId: String?) {
+        booksViewModel.onPaymentSuccess(razorpayPaymentId ?: "")
+    }
+
+    override fun onPaymentError(code: Int, response: String?) {
+        booksViewModel.onPaymentError("Payment Failed: $response")
     }
 }
 
 @Composable
-fun AppNavigation() {
+fun AppNavigation(authViewModel: AuthViewModel, booksViewModel: BooksViewModel) {
     val navController = rememberNavController()
-    val factory = ViewModelFactory()
-    val authViewModel: AuthViewModel = viewModel(factory = factory)
-    val booksViewModel: BooksViewModel = viewModel(factory = factory)
 
     val currentUser = authViewModel.profile.value
 
@@ -72,7 +117,7 @@ fun AppNavigation() {
 
         composable("book_detail/{bookId}") { backStackEntry ->
             val bookId = backStackEntry.arguments?.getString("bookId") ?: return@composable
-            BookDetailScreen(bookId, booksViewModel, authViewModel) { navController.popBackStack() }
+            BookDetailScreen(bookId, booksViewModel, authViewModel, navController)
         }
 
         composable("manage_books") {
@@ -84,22 +129,19 @@ fun AppNavigation() {
             ManageBooksScreen(bookId, booksViewModel, authViewModel) { navController.popBackStack() }
         }
 
-        composable("reservations") {
-            ReservationsScreen(
-                booksViewModel = booksViewModel,
-                authViewModel = authViewModel,
-                onNavigate = { route -> navController.navigate(route) },
-                onBack = { navController.popBackStack() },
-                onReservationClick = { resId -> navController.navigate("reservation_detail/$resId") }
-            )
+        composable("booking_detail/{bookingId}") { backStackEntry ->
+            val bookingId = backStackEntry.arguments?.getString("bookingId") ?: return@composable
+            BookingDetailScreen(bookingId, booksViewModel, authViewModel) { navController.popBackStack() }
         }
 
-        composable("reservation_detail/{resId}") { backStackEntry ->
-            val resId = backStackEntry.arguments?.getString("resId") ?: return@composable
-            ReservationDetailScreen(
-                reservationId = resId,
+        composable("chat") {
+            AIChatScreen { navController.popBackStack() }
+        }
+
+        composable("my_bookings") {
+            MyBookingsScreen(
                 booksViewModel = booksViewModel,
-                authViewModel = authViewModel,
+                onNavigateToDetail = { id -> navController.navigate("booking_detail/$id") },
                 onBack = { navController.popBackStack() }
             )
         }

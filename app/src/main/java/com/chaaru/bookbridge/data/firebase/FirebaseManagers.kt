@@ -1,10 +1,20 @@
 package com.chaaru.bookbridge.data.firebase
 
+import android.content.Context
+import android.net.Uri
 import com.chaaru.bookbridge.data.model.*
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.storage.FirebaseStorage
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
+import java.io.File
+import java.io.FileOutputStream
+import java.util.UUID
 
 class AuthManager {
     private val auth = FirebaseAuth.getInstance()
@@ -13,7 +23,7 @@ class AuthManager {
     fun currentUser() = auth.currentUser
 
     suspend fun getUserProfile(uid: String): UserProfile? = try {
-        db.collection("users").document(uid).get(com.google.firebase.firestore.Source.SERVER).await().toObject(UserProfile::class.java)
+        db.collection("users").document(uid).get().await().toObject(UserProfile::class.java)
     } catch (e: Exception) {
         null
     }
@@ -70,47 +80,15 @@ class AuthManager {
     suspend fun deleteAccount(): Result<Unit> = try {
         val user = auth.currentUser ?: throw Exception("Not logged in")
         val uid = user.uid
-        
-        // 1. Get profile to check for storeId
         val profile = getUserProfile(uid)
-        
-        // 2. Delete User Profile
         db.collection("users").document(uid).delete().await()
-        
-        // 3. If owner, delete store and associated books
         profile?.storeId?.let { storeId ->
             db.collection("stores").document(storeId).delete().await()
             val books = db.collection("books").whereEqualTo("storeId", storeId).get().await()
-            for (doc in books) {
-                doc.reference.delete().await()
-            }
+            for (doc in books) doc.reference.delete().await()
         }
-        
-        // 4. Delete user's reservations
-        val reservations = db.collection("reservations").whereEqualTo("userId", uid).get().await()
-        for (doc in reservations) {
-            doc.reference.delete().await()
-        }
-
-        // 5. Delete Auth User
         user.delete().await()
         Result.success(Unit)
-    } catch (e: Exception) {
-        Result.failure(e)
-    }
-
-    suspend fun firebaseAuthWithGoogle(idToken: String): Result<UserProfile> = try {
-        val credential = com.google.firebase.auth.GoogleAuthProvider.getCredential(idToken, null)
-        val result = auth.signInWithCredential(credential).await()
-        val uid = result.user!!.uid
-        val existing = getUserProfile(uid)
-        if (existing == null) {
-            val profile = UserProfile(uid = uid, name = result.user!!.displayName ?: "User", email = result.user!!.email ?: "", role = "student")
-            db.collection("users").document(uid).set(profile).await()
-            Result.success(profile)
-        } else {
-            Result.success(existing)
-        }
     } catch (e: Exception) {
         Result.failure(e)
     }
@@ -118,171 +96,187 @@ class AuthManager {
 
 class FirestoreManager {
     private val db = FirebaseFirestore.getInstance()
+    private val storage = FirebaseStorage.getInstance()
 
-    suspend fun getBooks(category: String = "All", queryText: String = "", storeId: String? = null): List<Book> = try {
-        var query: Query = db.collection("books")
+    fun getBooksFlow(storeId: String? = null): Flow<List<Book>> = callbackFlow {
+        val query = if (storeId != null) db.collection("books").whereEqualTo("storeId", storeId)
+                    else db.collection("books")
+        
+        val subscription = query.addSnapshotListener { snapshot, error ->
+            if (error != null) {
+                close(error)
+                return@addSnapshotListener
+            }
+            if (snapshot != null) {
+                val books = snapshot.toObjects(Book::class.java)
+                trySend(books)
+            }
+        }
+        awaitClose { subscription.remove() }
+    }
+
+    fun getBookingsFlow(userId: String? = null, storeId: String? = null): Flow<List<Booking>> = callbackFlow {
+        var query: Query = db.collection("bookings")
+        if (userId != null) query = query.whereEqualTo("userId", userId)
         if (storeId != null) query = query.whereEqualTo("storeId", storeId)
         
-        val snapshot = query.get().await()
-        snapshot.toObjects(Book::class.java)
-    } catch (e: Exception) {
-        android.util.Log.e("FirestoreManager", "Error fetching books", e)
-        emptyList()
-    }
-
-    suspend fun getAllStores(): List<Store> = try {
-        db.collection("stores").get().await().toObjects(Store::class.java)
-    } catch (e: Exception) {
-        emptyList()
-    }
-
-    suspend fun toggleFavorite(userId: String, bookId: String): Boolean = try {
-        val ref = db.collection("users").document(userId).collection("favorites").document(bookId)
-        if (ref.get().await().exists()) {
-            ref.delete().await()
-            false
-        } else {
-            ref.set(mapOf("bookId" to bookId)).await()
-            true
+        val subscription = query.addSnapshotListener { snapshot, error ->
+            if (error != null) {
+                close(error)
+                return@addSnapshotListener
+            }
+            if (snapshot != null) {
+                val bookings = snapshot.toObjects(Booking::class.java)
+                trySend(bookings)
+            }
         }
-    } catch (e: Exception) {
-        false
+        awaitClose { subscription.remove() }
     }
 
-    suspend fun getFavorites(userId: String): List<String> = try {
-        db.collection("users").document(userId).collection("favorites").get().await().map { it.id }
-    } catch (e: Exception) {
-        emptyList()
+    fun getReviewsFlow(bookId: String): Flow<List<Review>> = callbackFlow {
+        val subscription = db.collection("reviews")
+            .whereEqualTo("bookId", bookId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                if (snapshot != null) {
+                    val reviews = snapshot.toObjects(Review::class.java)
+                    trySend(reviews)
+                }
+            }
+        awaitClose { subscription.remove() }
     }
 
-    suspend fun reserveBook(res: Reservation): Result<Unit> = try {
-        val existing = db.collection("reservations")
-            .whereEqualTo("bookId", res.bookId)
-            .whereEqualTo("status", "APPROVED")
-            .get().await()
+    suspend fun addReview(review: Review): Result<Unit> = try {
+        val reviewRef = db.collection("reviews").document()
+        val reviewWithId = review.copy(id = reviewRef.id)
+        reviewRef.set(reviewWithId).await()
         
-        if (!existing.isEmpty) throw Exception("Book already reserved")
+        // Update book rating
+        val bookRef = db.collection("books").document(review.bookId)
+        db.runTransaction { transaction ->
+            val bookSnapshot = transaction.get(bookRef)
+            val book = bookSnapshot.toObject(Book::class.java)
+            if (book != null) {
+                val newCount = book.reviewCount + 1
+                val newRating = (book.rating * book.reviewCount + review.rating) / newCount
+                transaction.update(bookRef, "rating", newRating)
+                transaction.update(bookRef, "reviewCount", newCount)
+            }
+        }.await()
         
-        // Ensure storeName is populated in reservation for better UI
-        val bookDoc = db.collection("books").document(res.bookId).get().await()
-        val storeName = bookDoc.getString("storeName") ?: "Unknown Store"
-        
-        db.collection("reservations").add(res).await()
         Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)
     }
 
-    suspend fun getReservations(userId: String? = null, storeId: String? = null): List<Reservation> = try {
-        var query: Query = db.collection("reservations")
-        if (userId != null) query = query.whereEqualTo("userId", userId)
-        if (storeId != null) query = query.whereEqualTo("storeId", storeId)
-        query.get().await().toObjects(Reservation::class.java)
-    } catch (e: Exception) {
-        emptyList()
-    }
-
-    suspend fun updateReservationStatus(id: String, status: String) {
-        db.collection("reservations").document(id).update("status", status).await()
-    }
-
-    suspend fun updateReservationDates(id: String, startDate: Long, endDate: Long) {
-        db.collection("reservations").document(id).update(
-            "startDate", startDate,
-            "endDate", endDate
-        ).await()
-    }
-
-    suspend fun deleteReservation(id: String) {
-        db.collection("reservations").document(id).delete().await()
-    }
-
-    suspend fun addBook(book: Book) { 
-        val storeId = book.storeId ?: ""
-        val store = if (storeId.isNotEmpty()) db.collection("stores").document(storeId).get().await().toObject(Store::class.java) else null
-        val bookWithInfo = book.copy(
-            storeName = store?.name ?: book.storeName,
-            displayStoreName = store?.name ?: book.storeName,
-            ownerId = store?.ownerId ?: book.ownerId
-        )
-        // Explicitly remove id to let Firestore generate one
-        val bookMap = hashMapOf(
-            "title" to bookWithInfo.title,
-            "author" to bookWithInfo.author,
-            "category" to bookWithInfo.category,
-            "description" to bookWithInfo.description,
-            "condition" to bookWithInfo.condition,
-            "price" to bookWithInfo.price,
-            "storeId" to bookWithInfo.storeId,
-            "storeName" to bookWithInfo.storeName,
-            "ownerId" to bookWithInfo.ownerId,
-            "displayStoreName" to bookWithInfo.displayStoreName,
-            "available" to bookWithInfo.available,
-            "rating" to bookWithInfo.rating,
-            "reviewCount" to bookWithInfo.reviewCount,
-            "startDate" to bookWithInfo.startDate,
-            "endDate" to bookWithInfo.endDate
-        )
-        db.collection("books").add(bookMap).await()
-    }
-
-    suspend fun updateBook(book: Book) { 
-        val storeId = book.storeId ?: ""
-        val store = if (storeId.isNotEmpty()) db.collection("stores").document(storeId).get().await().toObject(Store::class.java) else null
-        val bookWithInfo = book.copy(
-            storeName = store?.name ?: book.storeName,
-            displayStoreName = store?.name ?: book.storeName,
-            ownerId = store?.ownerId ?: book.ownerId
-        )
-        val bookMap = hashMapOf(
-            "title" to bookWithInfo.title,
-            "author" to bookWithInfo.author,
-            "category" to bookWithInfo.category,
-            "description" to bookWithInfo.description,
-            "condition" to bookWithInfo.condition,
-            "price" to bookWithInfo.price,
-            "storeId" to bookWithInfo.storeId,
-            "storeName" to bookWithInfo.storeName,
-            "ownerId" to bookWithInfo.ownerId,
-            "displayStoreName" to bookWithInfo.displayStoreName,
-            "available" to bookWithInfo.available,
-            "rating" to bookWithInfo.rating,
-            "reviewCount" to bookWithInfo.reviewCount,
-            "startDate" to bookWithInfo.startDate,
-            "endDate" to bookWithInfo.endDate
-        )
-        db.collection("books").document(book.id).set(bookMap).await()
-    }
-    suspend fun deleteBook(id: String) { db.collection("books").document(id).delete().await() }
-
-    suspend fun addReview(review: Review) {
-        db.collection("reviews").add(review).await()
-        val bookRef = db.collection("books").document(review.bookId)
-        db.runTransaction { transaction ->
-            val snapshot = transaction.get(bookRef)
-            val oldCount = snapshot.getLong("reviewCount") ?: 0L
-            val oldRating = snapshot.getDouble("rating") ?: 0.0
-            val newCount = oldCount + 1
-            val newRating = (oldRating * oldCount + review.rating) / newCount
-            transaction.update(bookRef, "reviewCount", newCount)
-            transaction.update(bookRef, "rating", newRating)
-        }.await()
-    }
-
-    suspend fun getReviews(bookId: String): List<Review> = try {
-        db.collection("reviews").whereEqualTo("bookId", bookId).get().await().toObjects(Review::class.java)
-    } catch (e: Exception) {
-        emptyList()
-    }
-
-    suspend fun resetAndSeed() {
-        // Clear everything to allow a clean slate
-        val collections = listOf("users", "books", "stores", "reservations", "reviews")
-        for (collection in collections) {
-            val snapshot = db.collection(collection).get().await()
-            for (doc in snapshot.documents) {
-                doc.reference.delete().await()
+    suspend fun uploadImage(context: Context, uri: Uri): String {
+        val fileName = "book_${UUID.randomUUID()}.jpg"
+        val storageRef = storage.reference.child("book_covers/$fileName")
+        
+        // Save locally first as a cache
+        val localFile = File(context.filesDir, fileName)
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            FileOutputStream(localFile).use { output ->
+                input.copyTo(output)
             }
+        }
+
+        // Upload to Firebase Storage
+        return try {
+            storageRef.putFile(uri).await()
+            val downloadUrl = storageRef.downloadUrl.await()
+            downloadUrl.toString()
+        } catch (e: Exception) {
+            // If upload fails, return local path as fallback (though it won't be cross-device)
+            localFile.absolutePath
+        }
+    }
+
+    suspend fun saveImageLocally(context: Context, uri: Uri): String {
+        return uploadImage(context, uri)
+    }
+
+    suspend fun createBooking(booking: Booking): Result<Unit> = try {
+        val bookingRef = db.collection("bookings").document()
+        val bookingWithId = booking.copy(id = bookingRef.id)
+        bookingRef.set(bookingWithId).await()
+        db.collection("books").document(booking.bookId).update(
+            "status", "reserved",
+            "available", false
+        ).await()
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    suspend fun updateBookingStatus(bookingId: String, status: String): Result<Unit> = try {
+        val bookingRef = db.collection("bookings").document(bookingId)
+        val snapshot = bookingRef.get().await()
+        val booking = snapshot.toObject(Booking::class.java)
+        
+        if (booking != null) {
+            bookingRef.update("status", status).await()
+            // Sync book status
+            val bookStatus = when(status) {
+                "completed" -> "sold"
+                "cancelled" -> "available"
+                "advance_paid" -> "reserved"
+                else -> null
+            }
+            
+            bookStatus?.let {
+                db.collection("books").document(booking.bookId).update(
+                    "status", it,
+                    "available", it == "available"
+                ).await()
+            }
+            Result.success(Unit)
+        } else {
+            Result.failure(Exception("Booking not found"))
+        }
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    suspend fun deleteBooking(bookingId: String): Result<Unit> = try {
+        val bookingRef = db.collection("bookings").document(bookingId)
+        val snapshot = bookingRef.get().await()
+        val booking = snapshot.toObject(Booking::class.java)
+        
+        if (booking != null) {
+            // Revert book status to available
+            db.collection("books").document(booking.bookId).update(
+                "status", "available",
+                "available", true
+            ).await()
+            
+            bookingRef.delete().await()
+            Result.success(Unit)
+        } else {
+            Result.failure(Exception("Booking not found"))
+        }
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    suspend fun addBook(book: Book) {
+        val bookRef = db.collection("books").document()
+        val bookWithId = book.copy(id = bookRef.id)
+        bookRef.set(bookWithId).await()
+    }
+
+    suspend fun updateBook(book: Book) {
+        db.collection("books").document(book.id).set(book).await()
+    }
+
+    suspend fun deleteBook(id: String, localImagePath: String? = null) {
+        db.collection("books").document(id).delete().await()
+        localImagePath?.let { path ->
+            val file = File(path)
+            if (file.exists()) file.delete()
         }
     }
 }
